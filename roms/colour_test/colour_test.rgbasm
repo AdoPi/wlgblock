@@ -1,0 +1,384 @@
+INCLUDE "hardware.inc"
+INCLUDE "font.rgbasm"
+
+; Location of colour variables, relative to $FF00
+RED_LOCATION EQU $80
+GREEN_LOCATION EQU $81
+BLUE_LOCATION EQU $82
+SELECTION_LOCATION EQU $83
+
+
+SECTION "Interrupts", ROM0[$40]
+
+VBlankInterrupt:
+  di
+  call UpdateScreen
+  reti
+  db 0, 0, 0
+LCDStatInterrupt:
+REPT 8
+  db 0
+ENDR
+TimerInterrupt:
+REPT 8
+  db 0
+ENDR
+SerialInterrupt:
+REPT 8
+  db 0
+ENDR
+JoypadInterrupt:
+  di
+  call ButtonPress
+  reti
+  db 0, 0, 0
+
+SECTION "Header", ROM0[$100]
+
+EntryPoint:
+  di
+  jp Start
+
+REPT $134 - $104
+  db 0
+ENDR
+
+  db "GBCCCOLOUR", 0 ; ROM Title
+  db "PHIL" ; Manufacturer Code
+  db CART_COMPATIBLE_GBC ; GBC Flag
+  db "PJ" ; Licensee Code
+  db 0 ; SGB Flag
+  db CART_ROM_MBC3_BAT_RTC ; Cartridge Type
+  db CART_ROM_256K ; ROM Size
+  db CART_RAM_NONE ; RAM Size
+  db 1 ; Destination (Non-Japanese)
+  db $33 ; Old Licensee Code
+  db 0 ; Version Number
+
+REPT $150 - $14D
+  db 0
+ENDR
+
+
+SECTION "Game code", ROM0
+
+Start:
+  ; Turn off the LCD
+.waitVBlank
+  ld a, [rLY]
+  cp 144 ; Check for VBlank
+  jr c, .waitVBlank
+
+  xor a
+  ld [rLCDC], a ; Turn off the LCD
+
+  call InstallFont
+
+  ; Set palettes
+  ld a, %10000000
+  ld [rBCPS], a
+
+  ld b, 8
+  ld hl, Palette
+  ld de, rBCPD
+.copyPalette
+  ld a, [hli]
+  ld [de], a
+  dec b
+  jr nz, .copyPalette
+
+  ; Init display registers
+  xor a
+  ld [rSCY], a
+  ld [rSCX], a
+
+  ld [rNR52], a ; Turn off sound
+  ldh [SELECTION_LOCATION], a ; Initialise selection
+
+  call UpdateScreen
+
+  ; Turn screen on and display background
+  ld a, %10010001
+  ld [rLCDC], a
+
+  ; Enable VBlank and joypad interrupts
+  ld a, %00010001
+  ld [rIE], a
+  ei
+
+  ; Lock up
+.lockup
+  halt
+  jr .lockup
+
+
+SECTION "Strings", ROM0
+
+SelectionStr:
+  db ">", 0
+RedStr:
+  db "R: ", 0
+GreenStr:
+  db "G: ", 0
+BlueStr:
+  db "B: ", 0
+SpaceStr:
+  db " ", 0
+
+Num0Str:
+  db "00", 0, 0
+  db "01", 0, 0
+  db "02", 0, 0
+  db "03", 0, 0
+  db "04", 0, 0
+  db "05", 0, 0
+  db "06", 0, 0
+  db "07", 0, 0
+  db "08", 0, 0
+  db "09", 0, 0
+  db "10", 0, 0
+  db "11", 0, 0
+  db "12", 0, 0
+  db "13", 0, 0
+  db "14", 0, 0
+  db "15", 0, 0
+  db "16", 0, 0
+  db "17", 0, 0
+  db "18", 0, 0
+  db "19", 0, 0
+  db "20", 0, 0
+  db "21", 0, 0
+  db "22", 0, 0
+  db "23", 0, 0
+  db "24", 0, 0
+  db "25", 0, 0
+  db "26", 0, 0
+  db "27", 0, 0
+  db "28", 0, 0
+  db "29", 0, 0
+  db "30", 0, 0
+  db "31", 0, 0
+
+
+SECTION "Functions", ROM0
+
+ButtonPress:
+  ; Read the state of the dpad
+  ld a, %00100000
+  ld [rP1], a
+  ld a, [rP1]
+  ld d, a
+
+  ; Read which colour we have selected
+  ldh a, [SELECTION_LOCATION]
+  ; Select the appropriate memory location to edit
+  ld b, $FF
+  ld c, RED_LOCATION
+  add c
+  ld c, a
+
+  ; Read the colour
+  ld a, [bc]
+
+  ; Check for direction press
+  bit 0, d ; right
+  jr z, .right
+  bit 1, d ; left
+  jr z, .left
+  bit 2, d ; up
+  jr z, .up
+  bit 3, d ; down
+  jr z, .down
+  ret ; dpad not pressed
+.right
+  inc a
+  jr .leftRightCont
+.left
+  dec a
+.leftRightCont
+  and $1F
+  ld [bc], a
+  ret
+.up
+  ldh a, [SELECTION_LOCATION]
+  dec a
+  and 3
+  cp 3
+  jr nz, .upDownCont
+  dec a
+  jr .upDownCont
+.down
+  ldh a, [SELECTION_LOCATION]
+  inc a
+  and 3
+  cp 3
+  jr nz, .upDownCont
+  xor a
+.upDownCont
+  ldh [SELECTION_LOCATION], a
+  ret
+
+UpdateScreen:
+  ; Draw some text
+  ; Clear the selection column
+  ld b, 6 ; x = 6
+  ld c, 7 ; y = 7
+  ld de, SpaceStr
+  call PrintString
+  inc c
+  ld de, SpaceStr
+  call PrintString
+  inc c
+  ld de, SpaceStr
+  call PrintString
+
+  ; Print the selection cursor
+  ldh a, [SELECTION_LOCATION]
+  add a, 7
+  ld b, 6 ; x = 6
+  ld c, a ; y = 7 + selection
+  ld de, SelectionStr
+  call PrintString
+
+  ; Print the colour names
+  ld b, 7 ; x = 7
+  ld c, 7 ; y = 7
+  ld de, RedStr
+  call PrintString
+  inc c
+  call PrintString
+  inc c
+  call PrintString
+
+  ; Print the colour values
+  ld b, 9 ; x = 10
+  ld c, 7 ; y = 7
+  ldh a, [RED_LOCATION]
+  sla a
+  sla a
+  ld e, a 
+  ld d, 0
+  ld hl, Num0Str
+  add hl, de
+  ld d, h
+  ld e, l
+  call PrintString
+  inc c
+  ldh a, [GREEN_LOCATION]
+  sla a
+  sla a
+  ld e, a 
+  ld d, 0
+  ld hl, Num0Str
+  add hl, de
+  ld d, h
+  ld e, l
+  call PrintString
+  inc c
+  ldh a, [BLUE_LOCATION]
+  sla a
+  sla a
+  ld e, a 
+  ld d, 0
+  ld hl, Num0Str
+  add hl, de
+  ld d, h
+  ld e, l
+  call PrintString
+
+
+  ; Set the background
+  ldh a, [RED_LOCATION]
+  ld b, a
+  ldh a, [GREEN_LOCATION]
+  ld c, a
+  ldh a, [BLUE_LOCATION]
+  ld d, a
+  call SetColour
+  ret
+
+; Set colour 0 of palette 0
+; @param b The R value to set
+; @param c The G value to set
+; @param d The B value to set
+; @return a Garbage
+SetColour:
+  ; Select palette 0, colour 0
+  ld a, %10000000
+  ld [rBCPS], a
+  ; Set lower byte of colour
+  ld a, c
+  sla a
+  sla a
+  sla a
+  sla a
+  sla a
+  or b
+  ld [rBCPD], a
+  ; Set upper byte of colour
+  push de
+  ld a, c
+  srl a
+  srl a
+  srl a
+  sla d 
+  sla d 
+  or d
+  pop de
+  ld [rBCPD], a
+  ret
+
+
+; Display a string on the screen
+; @param b The x tile co-ordinate to start printing at
+; @param c The y tile co-ordinate to start printing at
+; @param de A pointer to the string to be printed
+; @return de A pointer to the byte after the source string's terminating byte
+; @return hl A pointer to the byte after the last copied byte
+; @return a Garbage
+; @return flags C reset, Z set
+PrintString:
+  ; Set h to contain upper byte of tile number (32 * c + b)
+  ld h, c 
+  srl h
+  srl h
+  srl h
+  ; And l to contain lower byte
+  ld a, c
+  sla a
+  sla a
+  sla a
+  sla a
+  sla a
+  add b
+  ld l, a
+  push bc
+  ld bc, $9800  ; Beginning of background tile map
+  add hl, bc
+  call Strcpy
+  pop bc
+  ret
+  
+
+; Copy a string up to but not including the first NUL character
+; @param de A pointer to the string to be copied
+; @param hl A pointer to the beginning of the destination buffer
+; @return de A pointer to the byte after the source string's terminating byte
+; @return hl A pointer to the byte after the last copied byte
+; @return a Zero
+; @return flags C reset, Z set
+Strcpy:
+  ld a, [de]
+  inc de
+  and a
+  ret z
+  ld [hli], a
+  jr Strcpy
+
+SECTION "Palette", ROM0
+
+Palette:
+  db $29, $25
+  db $29, $25
+  db $29, $25
+  db $FF, $FF

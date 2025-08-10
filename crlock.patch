@@ -1,0 +1,624 @@
+diff -ruN a/engine/menus/init_gender.asm b/engine/menus/init_gender.asm
+--- a/engine/menus/init_gender.asm	2025-08-06 22:40:38.570637926 +0200
++++ b/engine/menus/init_gender.asm	2025-08-06 22:40:43.032571614 +0200
+@@ -21,11 +21,20 @@
+ INCLUDE "mobile/mobile_12.asm"
+ 
+ InitGender:
++
+ 	call InitGenderScreen
++
+ 	call LoadGenderScreenPal
+ 	call LoadGenderScreenLightBlueTile
+ 	call WaitBGMap2
+ 	call SetDefaultBGPAndOBP
++
++	; wgblock(force value gender)
++	ld a, [wMenuCursorY]
++	; dec a for girl
++	ld [wPlayerGender], a
++	ret
++
+ 	ld hl, AreYouABoyOrAreYouAGirlText
+ 	call PrintText
+ 	ld hl, .MenuHeader
+diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
+--- a/engine/menus/intro_menu.asm	2025-08-06 22:40:38.570637926 +0200
++++ b/engine/menus/intro_menu.asm	2025-08-06 22:40:43.032571614 +0200
+@@ -1,4 +1,8 @@
+ Intro_MainMenu:
++	; wgblock(skip intro)
++	farcall MainMenu
++	;ret
++
+ 	ld de, MUSIC_NONE
+ 	call PlayMusic
+ 	call DelayFrame
+@@ -63,8 +67,9 @@
+ 	ld [wDebugFlags], a
+ 	call ResetWRAM
+ 	call NewGame_ClearTilemapEtc
+-	call PlayerProfileSetup
+-	call OakSpeech
++        ; wgblock(skip intro)
++	call HackedNamePlayer
++
+ 	call InitializeWorld
+ 
+ 	ld a, LANDMARK_NEW_BARK_TOWN
+@@ -75,6 +80,7 @@
+ 
+ 	ld a, MAPSETUP_WARP
+ 	ldh [hMapEntryMethod], a
++
+ 	jp FinishContinueFunction
+ 
+ PlayerProfileSetup:
+@@ -222,6 +228,7 @@
+ 	farcall ClearGSBallFlag
+ 
+ 	call ResetGameTime
++
+ 	ret
+ 
+ .InitList:
+@@ -383,7 +390,7 @@
+ 	ret
+ 
+ .SpawnAfterE4:
+-	ld a, SPAWN_NEW_BARK
++	ld a, SPAWN_MT_SILVER
+ 	ld [wDefaultSpawnpoint], a
+ 	call PostCreditsSpawn
+ 	jp FinishContinueFunction
+@@ -629,9 +636,10 @@
+ 	jp PrintNum
+ 
+ OakSpeech:
+-	farcall InitClock
+ 	call RotateFourPalettesLeft
+ 	call ClearTilemap
++	call NamePlayer
++	ret
+ 
+ 	ld de, MUSIC_ROUTE_30
+ 	call PlayMusic
+@@ -739,7 +747,23 @@
+ 	text_far _OakText7
+ 	text_end
+ 
++HackedNamePlayer:
++	ld hl, .Me
++	ld de, wPlayerName
++	call .Copy
++	ret
++.Me:  db "ADO@"
++.Copy:
++	ld bc, NAME_LENGTH
++	call CopyBytes
++	ret
++
+ NamePlayer:
++	ld hl, .Me
++	ld de, wPlayerName
++	call .Copy
++	ret
++
+ 	farcall MovePlayerPicRight
+ 	farcall ShowPlayerNamingChoices
+ 	ld a, [wMenuCursorY]
+@@ -750,6 +774,12 @@
+ 	farcall MovePlayerPicLeft
+ 	ret
+ 
++.Me:  db "Adonis@"
++.Copy:
++	ld bc, NAME_LENGTH
++	call CopyBytes
++	ret
++
+ .NewName:
+ 	ld b, NAME_PLAYER
+ 	ld de, wPlayerName
+@@ -966,11 +996,6 @@
+ DEF NUM_TITLESCREENOPTIONS EQU const_value
+ 
+ IntroSequence:
+-	callfar SplashScreen
+-	jr c, StartTitleScreen
+-	farcall CrystalIntro
+-
+-	; fallthrough
+ 
+ StartTitleScreen:
+ 	ldh a, [rSVBK]
+@@ -978,11 +1003,7 @@
+ 	ld a, BANK(wLYOverrides)
+ 	ldh [rSVBK], a
+ 
+-	call .TitleScreen
+-	call DelayFrame
+ .loop
+-	call RunTitleScreen
+-	jr nc, .loop
+ 
+ 	call ClearSprites
+ 	call ClearBGPalettes
+@@ -1032,6 +1053,9 @@
+ 	ret
+ 
+ RunTitleScreen:
++	jp .done_title
++	ret
++
+ 	ld a, [wJumptableIndex]
+ 	bit 7, a
+ 	jr nz, .done_title
+@@ -1043,6 +1067,7 @@
+ 
+ .done_title
+ 	scf
++	; farcall NewGame
+ 	ret
+ 
+ UnusedTitlePerspectiveScroll: ; unreferenced
+@@ -1343,7 +1368,6 @@
+ 	db "@"
+ 
+ GameInit::
+-	farcall TryLoadSaveData
+ 	call ClearWindowData
+ 	call ClearBGPalettes
+ 	call ClearTilemap
+diff -ruN a/engine/menus/main_menu.asm b/engine/menus/main_menu.asm
+--- a/engine/menus/main_menu.asm	2025-08-06 22:40:38.570637926 +0200
++++ b/engine/menus/main_menu.asm	2025-08-06 22:40:43.032571614 +0200
+@@ -25,6 +25,10 @@
+ 
+ MainMenu:
+ .loop
++	; wgblock(force NewGame)
++	farcall NewGame
++	ret
++
+ 	xor a
+ 	ld [wDisableTextAcceleration], a
+ 	call ClearTilemapEtc
+@@ -368,6 +372,7 @@
+ 	ret
+ 
+ MainMenu_NewGame:
++	; here we call NewGame
+ 	farcall NewGame
+ 	ret
+ 
+diff -ruN a/engine/menus/start_menu.asm b/engine/menus/start_menu.asm
+--- a/engine/menus/start_menu.asm	2025-08-06 22:40:38.570637926 +0200
++++ b/engine/menus/start_menu.asm	2025-08-06 22:40:43.033571599 +0200
+@@ -13,6 +13,10 @@
+ StartMenu::
+ 	call ClearWindowData
+ 
++	;opentext
++	;writetext TakeCyndaquilText
++
++
+ 	ld de, SFX_MENU
+ 	call PlaySFX
+ 
+@@ -298,6 +302,7 @@
+ 
+ 	ld a, [wPartyCount]
+ 	and a
++	; hack adonis nz / z
+ 	jr z, .no_pokemon
+ 	ld a, STARTMENUITEM_POKEMON
+ 	call .AppendMenuList
+Binary files a/engine/movie/credits.o and b/engine/movie/credits.o differ
+diff -ruN a/engine/movie/splash.asm b/engine/movie/splash.asm
+--- a/engine/movie/splash.asm	2025-08-06 22:40:38.570637926 +0200
++++ b/engine/movie/splash.asm	2025-08-06 22:40:43.033571599 +0200
+@@ -23,6 +23,9 @@
+ 	ld c, 10
+ 	call DelayFrames
+ 
++; wgblock(force skip SplashScreen)
++	jp .pressed_button
++	ret
+ ; Draw copyright screen
+ 	callfar Copyright
+ 	call WaitBGMap
+diff -ruN a/engine/movie/unused_title.asm b/engine/movie/unused_title.asm
+--- a/engine/movie/unused_title.asm	2025-08-06 22:40:38.570637926 +0200
++++ b/engine/movie/unused_title.asm	2025-08-06 22:40:43.033571599 +0200
+@@ -157,6 +157,7 @@
+ TestCrystalTitleScreen: ; unreferenced
+ ; Runs the title screen until A is pressed.
+ ; Possibly used for testing.
++	jp .done
+ 	call _TitleScreen
+ .loop
+ 	call JoyTextDelay
+Binary files a/engine/overworld/events.o and b/engine/overworld/events.o differ
+diff -ruN a/engine/pokemon/mon_submenu.asm b/engine/pokemon/mon_submenu.asm
+--- a/engine/pokemon/mon_submenu.asm	2025-08-06 22:40:38.574637866 +0200
++++ b/engine/pokemon/mon_submenu.asm	2025-08-06 22:40:43.038571525 +0200
+@@ -12,6 +12,7 @@
+ 
+ 	ld a, 1
+ 	ldh [hBGMapMode], a
++
+ 	call MonMenuLoop
+ 	ld [wMenuSelection], a
+ 
+@@ -39,6 +40,8 @@
+ 
+ MonMenuLoop:
+ .loop
++	jr .cancel
++        ; wgblock(hack)
+ 	ld a, MENU_UNUSED_3 | MENU_BACKUP_TILES_2 ; flags
+ 	ld [wMenuDataFlags], a
+ 	ld a, [wMonSubmenuCount]
+@@ -283,8 +286,9 @@
+ 	db 1 ; default option
+ 
+ .MenuData:
++        ; wgblock(hack)
+ 	db STATICMENU_CURSOR | STATICMENU_NO_TOP_SPACING ; flags
+-	db 3 ; items
++	;db 3 ; items
+ 	db "SWITCH@"
+-	db "STATS@"
+-	db "CANCEL@"
++	;db "STATS@"
++	;db "CANCEL@"
+diff -ruN a/engine/pokemon/party_menu.asm b/engine/pokemon/party_menu.asm
+--- a/engine/pokemon/party_menu.asm	2025-08-06 22:40:38.574637866 +0200
++++ b/engine/pokemon/party_menu.asm	2025-08-06 22:40:43.038571525 +0200
+@@ -1,5 +1,5 @@
+ SelectMonFromParty:
+-	call DisableSpriteUpdates
++;	call DisableSpriteUpdates
+ 	xor a
+ 	ld [wPartyMenuActionText], a
+ 	call ClearBGPalettes
+@@ -7,7 +7,9 @@
+ 	call WaitBGMap
+ 	call SetDefaultBGPAndOBP
+ 	call DelayFrame
++
+ 	call PartyMenuSelect
++
+ 	call ReturnToMapWithSpeechTextbox
+ 	ret
+ 
+@@ -680,6 +682,7 @@
+ 	ld b, a
+ 	bit B_BUTTON_F, b
+ 	jr nz, .exitmenu ; B button
++
+ 	ld a, [wMenuCursorY]
+ 	dec a
+ 	ld [wCurPartyMon], a
+@@ -690,11 +693,60 @@
+ 	ld a, [hl]
+ 	ld [wCurPartySpecies], a
+ 
++	; wgblock(auto-switch without submenu)
++	ld a, [wPartyMenuCursor]
++	ld [wCurPartyMon], a
++	ld c, a
++	ld b, 0
++	ld hl, wPartySpecies
++	add hl, bc
++	ld a, [hl]
++	ld [wCurPartySpecies], a
++
++	ld a, [wSwitchingPartyMons]
++	and a
++	jr z, .start_switch
++
++	ld a, [wSwitchMon]     
++	ld b, a
++	ld a, [wCurPartyMon]  
++	cp b
++	jr z, .cancel_switch 
++
++	call _SwitchPartyMons
++
++	xor a
++	ld [wSwitchingPartyMons], a
++
++	; refresh screen
++	call WaitBGMap
++	call LoadPartyMenuGFX
++	call InitPartyMenuGFX
++
+ 	ld de, SFX_READ_TEXT_2
+ 	call PlaySFX
+ 	call WaitSFX
+ 	and a
+-	ret
++        ret
++
++
++.cancel_switch
++	xor a
++	ld [wSwitchingPartyMons], a
++	call PlacePartyMenuText
++	jp PartyMenuSelect
++
++.start_switch
++	ld a, [wPartyMenuCursor]
++	ld [wSwitchMon], a
++	ld a, 1
++	ld [wSwitchingPartyMons], a
++
++	ld a, 4
++	ld [wPartyMenuActionText], a
++	call PlacePartyMenuText
++
++	jp PartyMenuSelect
+ 
+ .exitmenu
+ 	ld de, SFX_READ_TEXT_2
+diff -ruN a/engine/pokemon/switchpartymons.asm b/engine/pokemon/switchpartymons.asm
+--- a/engine/pokemon/switchpartymons.asm	2025-08-06 22:40:38.574637866 +0200
++++ b/engine/pokemon/switchpartymons.asm	2025-08-06 22:40:43.038571525 +0200
+@@ -1,4 +1,5 @@
+ _SwitchPartyMons:
++
+ 	ld a, [wSwitchMon]
+ 	dec a
+ 	ld [wSwitchMonFrom], a
+@@ -13,9 +14,12 @@
+ 	call .ClearSprite
+ 	ld a, [wSwitchMonTo]
+ 	call .ClearSprite
++
++	call DumbCheckPartyPassword
+ .skip
+ 	ret
+ 
++
+ .ClearSprite:
+ 	push af
+ 	hlcoord 0, 1
+@@ -143,3 +147,80 @@
+ 	ld bc, NAME_LENGTH
+ 	call CopyBytes
+ 	ret
++
++; wgblock(Here we check the password)
++NicknamesPass1:    db "This@", 0
++NicknamesPass2:    db "is@", 0
++NicknamesPass3:    db "My@", 0
++NicknamesPass4:    db "Pass@", 0
++NicknamesPass5:    db "Word@", 0
++NicknamesPass6:    db "!!!@", 0
++
++
++DumbCheckPartyPassword:
++	; init
++	ld a, 01
++	ld [$C007], a
++
++	ld hl, wPartyMon1Nickname
++       	ld de, NicknamesPass1
++	call .compare_strings
++	jr nz, .nicknames_mismatch
++
++	ld hl, wPartyMon2Nickname
++       	ld de, NicknamesPass2
++	call .compare_strings
++	jr nz, .nicknames_mismatch
++
++	ld hl, wPartyMon3Nickname
++       	ld de, NicknamesPass3
++	call .compare_strings
++	jr nz, .nicknames_mismatch
++
++	ld hl, wPartyMon4Nickname
++       	ld de, NicknamesPass4
++	call .compare_strings
++	jr nz, .nicknames_mismatch
++
++	ld hl, wPartyMon5Nickname
++       	ld de, NicknamesPass5
++	call .compare_strings
++	jr nz, .nicknames_mismatch
++
++	ld hl, wPartyMon6Nickname
++       	ld de, NicknamesPass6
++	call .compare_strings
++	jr nz, .nicknames_mismatch
++
++.all_match_check:
++	ld a, 99
++	ld [$DCC7], a
++	ret
++
++; Compare hl with de
++.compare_strings:
++    ld a, [hl] 
++    ld b, a 
++    ld a, [de] 
++    cp b
++    jr nz, .strings_not_equal 
++
++    cp "@" 
++    jr z, .strings_equal 
++
++    inc hl 
++    inc de 
++    jr .compare_strings 
++
++.strings_not_equal:
++    jp .nicknames_mismatch
++    ret
++
++.strings_equal: 
++    ld a, 1 
++    ret
++
++.nicknames_mismatch:
++	ld a, 02
++	ld [$C007], a
++	ret
+diff -ruN a/ram/wram.asm b/ram/wram.asm
+--- a/ram/wram.asm	2025-08-06 22:40:38.526638579 +0200
++++ b/ram/wram.asm	2025-08-06 22:48:33.748170911 +0200
+@@ -2348,6 +2348,9 @@
+ 
+ wCurPartySpecies:: db
+ 
++wSwitchingPartyMons:: ds 1
++
++
+ wCurPartyMon::
+ ; index of mon's party location (0-5)
+ 	db
+@@ -3299,19 +3302,20 @@
+ 
+ wCurMapDataEnd::
+ 
+-
+ SECTION "Party", WRAMX
+ 
+ wPokemonData::
+ 
+-wPartyCount::   db
+-wPartySpecies:: ds PARTY_LENGTH
++wPartyCount::   db 
++wPartySpecies:: ds PARTY_LENGTH 
+ wPartyEnd::     db ; older code doesn't check wPartyCount
+ 
+-wPartyMons::
+-; wPartyMon1 - wPartyMon6
+-for n, 1, PARTY_LENGTH + 1
+-wPartyMon{d:n}:: party_struct wPartyMon{d:n}
++
++
++wPartyMons:: 
++
++for n, 1, PARTY_LENGTH + 1 
++wPartyMon{d:n}:: party_struct wPartyMon{d:n} 
+ endr
+ 
+ wPartyMonOTs::
+diff -ruN a/maps/PlayersHouse1F.asm b/maps/PlayersHouse1F.asm
+--- a/maps/PlayersHouse1F.asm	2025-08-06 22:40:38.503638921 +0200
++++ b/maps/PlayersHouse1F.asm	2025-08-06 22:40:43.274568014 +0200
+@@ -407,3 +407,4 @@
+ 	object_event  7,  4, SPRITE_MOM, SPRITEMOVEDATA_STANDING_LEFT, 0, 0, -1, DAY, 0, OBJECTTYPE_SCRIPT, 0, MomScript, EVENT_PLAYERS_HOUSE_MOM_2
+ 	object_event  0,  2, SPRITE_MOM, SPRITEMOVEDATA_STANDING_UP, 0, 0, -1, NITE, 0, OBJECTTYPE_SCRIPT, 0, MomScript, EVENT_PLAYERS_HOUSE_MOM_2
+ 	object_event  4,  4, SPRITE_POKEFAN_F, SPRITEMOVEDATA_STANDING_RIGHT, 0, 0, -1, -1, PAL_NPC_RED, OBJECTTYPE_SCRIPT, 0, NeighborScript, EVENT_PLAYERS_HOUSE_1F_NEIGHBOR
++
+diff -ruN a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
+--- a/maps/PlayersHouse2F.asm	2025-08-06 22:40:38.503638921 +0200
++++ b/maps/PlayersHouse2F.asm	2025-08-06 22:40:43.252568342 +0200
+@@ -3,14 +3,24 @@
+ 	const PLAYERSHOUSE2F_DOLL_1
+ 	const PLAYERSHOUSE2F_DOLL_2
+ 	const PLAYERSHOUSE2F_BIG_DOLL
++	;const SCENE_PLAYERSHOUSE2F_HACK
+ 
+ PlayersHouse2F_MapScripts:
+ 	def_scene_scripts
++	;scene_script PlayersHouse2FHack1Scene, SCENE_PLAYERSHOUSE2F_HACK
+ 
+ 	def_callbacks
+ 	callback MAPCALLBACK_NEWMAP, PlayersHouse2FInitializeRoomCallback
+ 	callback MAPCALLBACK_TILES, PlayersHouse2FSetUpTileDecorationsCallback
+ 
++PlayersHouse2FHack1Scene:
++	end
++
++PlayersHouseScript:
++	;setflag ENGINE_POKEGEAR
++	;setflag ENGINE_PHONE_CARD
++	setflag ENGINE_POKEDEX
++
+ PlayersHouse2FNoopScene: ; unreferenced
+ 	end
+ 
+@@ -19,7 +29,9 @@
+ 	setevent EVENT_TEMPORARY_UNTIL_MAP_RELOAD_8
+ 	checkevent EVENT_INITIALIZED_EVENTS
+ 	iftrue .SkipInitialization
++	
+ 	jumpstd InitializeEventsScript
++
+ 	endcallback
+ 
+ .SkipInitialization:
+@@ -49,12 +61,23 @@
+ .Script:
+ 	describedecoration DECODESC_POSTER
+ 
++PkmnTestName1: db "This@", 0 
++PkmnTestName2: db "is@", 0 
++PkmnTestName3: db "My@", 0 
++PkmnTestName4: db "Pass@", 0 
++PkmnTestName5: db "Word@", 0 
++PkmnTestName6: db "!!!@", 0 
++
+ PlayersHouseRadioScript:
+ 	checkevent EVENT_GOT_A_POKEMON_FROM_ELM
++	iffalse .GivePoke
++
++	checkevent EVENT_GOT_A_POKEMON_FROM_ELM
+ 	iftrue .NormalRadio
+ 	checkevent EVENT_LISTENED_TO_INITIAL_RADIO
+ 	iftrue .AbbreviatedRadio
+ 	playmusic MUSIC_POKEMON_TALK
++
+ 	opentext
+ 	writetext PlayersRadioText1
+ 	pause 45
+@@ -69,6 +92,16 @@
+ 	setevent EVENT_LISTENED_TO_INITIAL_RADIO
+ 	end
+ 
++.GivePoke:
++	givepoke CYNDAQUIL, 99, NO_ITEM, PkmnTestName5, PkmnTestName5
++	givepoke PICHU, 99, NO_ITEM, PkmnTestName4, PkmnTestName4
++	givepoke KRABBY, 99, NO_ITEM, PkmnTestName6, PkmnTestName6
++	givepoke STARYU, 99, NO_ITEM, PkmnTestName1, PkmnTestName1
++	givepoke SUNKERN, 99, NO_ITEM, PkmnTestName2, PkmnTestName2
++	givepoke VOLTORB, 99, NO_ITEM, PkmnTestName3, PkmnTestName3
++	setevent EVENT_GOT_A_POKEMON_FROM_ELM
++	end
++
+ .NormalRadio:
+ 	jumpstd Radio1Script
+ 
+@@ -93,21 +126,24 @@
+ 	end
+ 
+ PlayersRadioText1:
+-	text "PROF.OAK'S #MON"
+-	line "TALK! Please tune"
+-	cont "in next time!"
++	done
++	text "Guess the"
++	line "Password"
+ 	done
+ 
+ PlayersRadioText2:
++	done
+ 	text "#MON CHANNEL!"
+ 	done
+ 
+ PlayersRadioText3:
++	done
+ 	text "This is DJ MARY,"
+ 	line "your co-host!"
+ 	done
+ 
+ PlayersRadioText4:
++	done
+ 	text "#MON!"
+ 	line "#MON CHANNEL…"
+ 	done

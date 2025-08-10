@@ -1,0 +1,3120 @@
+INCLUDE "hardware.inc"
+INCLUDE "notes.inc"
+
+SECTION "Interrupt handlers", HRAM
+VBLANK_ADDRESS:
+  ds 4
+LCDSTAT_ADDRESS:
+  ds 4
+TIMER_ADDRESS:
+  ds 4
+SERIAL_ADDRESS:
+  ds 4
+JOYPAD_ADDRESS:
+  ds 4
+
+
+SECTION "Variables", WRAM0
+BounceIndices: ; Indices into bounce table for each letter in welcome message
+  ds 10
+LogoFadeIndex: ; Current palette index for logo fade animation
+  ds 1
+ButtonsPressed: ; Bit flags indicating which buttons have been tested
+  ds 1          ; Order: A B Start Select Right Left Up Down
+FrameCounter: ; Generic frame counter
+  ds 1
+FrameCounter2: ; Generic frame counter
+  ds 1
+WindowAnimStage: ; Animation stage of "Yeah!" animation
+  ds 1
+WindowAnimNextHandler: ; VBlank handler address to install after the animation
+  ds 2
+WindowLYStart: ; LY to start drawing window at
+  ds 1
+WindowLYStop: ; LY to stop drawing window at
+  ds 1
+LastTime: ; Value of MBC3 RTC counters for pause / turbo detection
+  ds 1 ; Seconds
+  ds 1 ; Minutes
+
+
+SECTION "Interrupts", ROM0[$40]
+
+; Handle the interrupts elsewhere, to allow us to change interrupt handlers.
+VBlankInterrupt:
+  call VBLANK_ADDRESS
+  reti
+  db 0, 0, 0, 0
+LCDStatInterrupt:
+  call LCDSTAT_ADDRESS
+  reti
+  db 0, 0, 0, 0
+TimerInterrupt:
+  call TIMER_ADDRESS
+  reti
+  db 0, 0, 0, 0
+SerialInterrupt:
+  call SERIAL_ADDRESS
+  reti
+  db 0, 0, 0, 0
+JoypadInterrupt:
+  call JOYPAD_ADDRESS
+  reti
+  db 0, 0, 0, 0
+
+
+SECTION "Header", ROM0[$100]
+
+EntryPoint:
+  di
+  jp Start
+
+REPT $134 - $104
+  db 0
+ENDR
+  db "GBCCINTRO", 0, 0 ; ROM Title
+  db "PHIL" ; Manufacturer Code
+  db CART_COMPATIBLE_GBC ; GBC Flag
+  db "PJ" ; Licensee Code
+  db 0 ; SGB Flag
+  db CART_ROM_MBC3_BAT_RTC ; Cartridge Type
+  db CART_ROM_256K ; ROM Size
+  db CART_RAM_NONE ; RAM Size
+  db 1 ; Destination (Non-Japanese)
+  db $33 ; Old Licensee Code
+  db 0 ; Version Number
+
+REPT $150 - $14D
+  db 0
+ENDR
+
+
+SECTION "Setup", ROM0
+
+Start:
+  ; Install the skeleton of our interrupt handlers. Should be:
+  ;   call $0100
+  ;   ret
+  ; The address can then be changed during the program.
+  ld hl, VBLANK_ADDRESS
+  ld b, 5
+.install_handlers
+  ld a, $CD
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  inc a
+  ldi [hl], a
+  ld a, $C9
+  ldi [hl], a
+  dec b
+  jr nz, .install_handlers
+
+  ; Turn off the LCD
+.waitVBlank
+  ldh a, [rLY]
+  cp 144 ; Check for VBlank
+  jr c, .waitVBlank
+
+  xor a
+  ldh [rLCDC], a ; Turn off the LCD
+
+  call InstallFont
+
+  ld hl, $8800
+  ld de, GBCCLogo
+  ld bc, GBCCLogoEnd - GBCCLogo
+  call Memcpy
+
+  ld hl, $9800 ; Top-left of the tilemap
+  ld de, GBCCLogoMap
+  ld bc, GBCCLogoMapEnd - GBCCLogoMap
+  call Memcpy
+
+  ld a, 1
+  ldh [rVBK], a ; Switch to second VRAM bank
+
+  ld hl, $9800 ; Top-left of the tilemap
+  ld de, GBCCLogoAttributes
+  ld bc, GBCCLogoAttributesEnd - GBCCLogoAttributes
+  call Memcpy
+
+  xor a
+  ldh [rVBK], a ; Switch to first VRAM bank
+
+  ; Set palettes
+  ld a, %10000000
+  ldh [rBCPS], a
+  ld a, %10000000
+  ldh [rOCPS], a
+
+  ld b, 8
+  ld hl, LogoSpritePalettes.text
+  ld de, rBCPD
+.copyTextPalette
+  ldi a, [hl]
+  ld [de], a
+  dec b
+  jr nz, .copyTextPalette
+
+  ld b, 40
+  ld hl, LogoPalettes
+.copyPalette
+  ldi a, [hl]
+  ld [de], a
+  dec b
+  jr nz, .copyPalette
+
+  ld b, 8
+  ld hl, LogoSpritePalettes
+  ld de, rOCPD
+.copySpritePalette
+  ldi a, [hl]
+  ld [de], a
+  dec b
+  jr nz, .copySpritePalette
+
+  ; Init display registers
+  xor a
+  ldh [rSCY], a
+  ldh [rSCX], a
+
+  ldh [rNR52], a ; Turn off sound
+
+  jp WelcomeScreen ; Start the actual game
+
+
+SECTION "Welcome Screen", ROM0
+
+WelcomeScreen:
+  ld a, $80
+  ldh [rNR52], a ; Enable sound
+  ld a, $FF
+  ldh [rNR51], a ; All sounds to both sides
+  ld a, $77
+  ldh [rNR50], a ; Full volume, no Vin
+
+  xor a
+  ldh [rNR10], a ; No sweep
+  ld a, $80
+  ldh [rNR12], a ; Quarter volume, fast decreasing envelope
+
+  ; Fill wave ram with a 50% duty sqare wave
+  ld hl, _AUD3WAVERAM
+  ld b, 4
+.fillWave
+  ld a, $FF
+  ldi [hl], a
+  ld a, $88
+  ldi [hl], a
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  dec b
+  jr nz, .fillWave
+
+  ; Setup our sprites
+  ld bc, WelcomeStr
+  ld hl, _OAMRAM
+  ld d, 48 ; Initial x position
+  ld e, $00 ; Attributes to use
+.copySprites
+  ld a, [bc]
+  or a ; Check for terminating null byte
+  jr z, .copySpritesEnd
+  xor a
+  ldi [hl], a ; Y = 0
+  ld a, d
+  ldi [hl], a ; X = d
+  add 8 ; Move right by 8 pixels for each character
+  ld d, a
+  ld a, [bc]
+  ldi [hl], a ; Tile no. = character
+  inc bc
+  ld a, e
+  ldi [hl], a ; Attributes = e
+  jr .copySprites
+.copySpritesEnd
+
+  ; Initialise indices for the bounce animation
+  xor a
+  ld hl, BounceIndices
+  ld b, 10 ; Tile number counter
+  ld c, 10 ; Frame delay between each letter
+.initialiseBounce
+  ldi [hl], a
+  sub c
+  dec b
+  jr nz, .initialiseBounce
+
+  ; Initialise the palette index for the logo fade
+  xor a
+  ld hl, LogoFadeIndex
+  ld [hl], a
+  ld hl, FrameCounter
+  ld [hl], a
+
+  ; Install the initial vblank handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(WelcomeScroll)
+  ldi [hl], a
+  ld a, HIGH(WelcomeScroll)
+  ldi [hl], a
+
+  ; Turn screen on and display background
+  ld a, %10010011 ; Only enable VBlank interrupt
+  ldh [rLCDC], a
+  ld a, %00000001
+  ldh [rIE], a
+
+  xor a
+  ldh [rIF], a ; Clear any waiting interrupts
+  ei
+
+  ; Lock up
+.lockup
+  halt
+  jr .lockup
+
+
+; Scroll down our welcome text each frame
+WelcomeScroll:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Increment the time for each animation
+  ld hl, BounceIndices
+  ld d, WelcomeStrEnd - WelcomeStr - 1 ; Number of sprites to update
+  ld e, d ; Number of animations that are still playing
+.incrementIndices
+  ld a, [hl]
+  inc a
+  cp BOUNCE_LENGTH-1
+  jr nz, .noUpdate ; Stop updating once the index hits bounce_length
+  dec a
+  dec e
+.noUpdate
+  ldi [hl], a
+  dec d
+  jr nz, .incrementIndices
+
+  ; Check if we've finished the animation
+  ld a, e
+  or a
+  jp z, WelcomeScrollFinish
+
+  ; Do the actual animation
+  ld bc, BounceIndices ; Table of indices into bounce table for each letter
+  ld d, WelcomeStrEnd - WelcomeStr - 1 ; Number of sprites to update
+  ld hl, _OAMRAM ; First tile to update
+.scroll
+  ld a, [bc] ; a = index in bounce table for current sprite
+  ld [FrameCounter2], a
+  inc bc
+  push bc ; Store bc so we can re-use it
+  ld bc, BounceTable ; Table of y-coordinates for bounce animation
+  add c ; Offset to the current entry
+  ld c, a
+  jr nc, .scroll2
+  inc b ; Manually add the carried bit, so we add an 8-bit reg to bc
+.scroll2
+  ld a, [FrameCounter2]
+
+  ; Play a beep on frame 29 (the first bounce)
+  cp 29
+  jr nz, .scroll3
+  ld a, %00111111
+  ldh [rNR11], a ; 50% duty, No length
+
+  push bc
+  push hl
+  ld hl, .play
+  ld a, d
+  dec a
+  jr z, .note9
+  dec a
+  jr z, .note8
+  dec a
+  jr z, .note7
+  dec a
+  jr z, .note6
+  dec a
+  jr z, .note5
+  dec a
+  jr z, .note4
+  dec a
+  jr z, .note3
+  dec a
+  jr z, .note2
+  dec a
+  jr z, .note1
+  dec a
+.note0
+  ld bc, NOTE_C4 | $8000
+  jp hl
+.note1
+  ld bc, NOTE_D4 | $8000
+  jp hl
+.note2
+  ld bc, NOTE_E4 | $8000
+  jp hl
+.note3
+  ld bc, NOTE_F4 | $8000
+  jp hl
+.note4
+  ld bc, NOTE_G4 | $8000
+  jp hl
+.note5
+  ld bc, NOTE_A4 | $8000
+  jp hl
+.note6
+  ld bc, NOTE_B4 | $8000
+  jp hl
+.note7
+  ld bc, NOTE_C5 | $8000
+  jp hl
+.note8
+  ld bc, NOTE_D5 | $8000
+  jp hl
+.note9
+  ld bc, NOTE_E5 | $8000
+
+  ld a, %10000110
+  ldh [rNR12], a ; Slow fade out on last note
+
+.play
+  ld a, c
+  ldh [rNR13], a
+  ld a, b
+  ldh [rNR14], a
+  pop hl
+  pop bc
+
+.scroll3
+  ld a, [bc] ; a = next y-coordinate
+  ld [hl], a
+  inc hl
+  inc hl
+  inc hl
+  inc hl ; Next tile
+  pop bc
+  dec d
+  jr nz, .scroll
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+WelcomeScrollFinish:
+  ; Install the next vblank handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(WelcomeFade)
+  ldi [hl], a
+  ld a, HIGH(WelcomeFade)
+  ldi [hl], a
+
+  ; Set initial master volume to 0 (which is really 1)
+  xor a
+  ldh [rNR50], a
+
+  ; Play the chord for the fade in
+  xor a
+  ldh [rNR10], a ; No sweep
+  ld a, %10000000
+  ldh [rNR11], a ; 50% duty, No length
+  ldh [rNR21], a
+  ld a, $80
+  ldh [rNR12], a ; 50% volume, no fade (we'll do it manually)
+  ldh [rNR22], a
+  ld a, LOW(NOTE_E4)
+  ldh [rNR13], a
+  ld a, HIGH(NOTE_E4) | %10000000
+  ldh [rNR14], a
+  ld a, LOW(NOTE_G4)
+  ldh [rNR23], a
+  ld a, HIGH(NOTE_G4) | %10000000
+  ldh [rNR24], a
+
+  ld a, $80
+  ldh [rNR30], a ; Enable wave
+  ld a, %01000000
+  ldh [rNR32], a ; 100% volume (as we're playing 2 notes with wave)
+  ld a, LOW(1046)
+  ldh [rNR33], a ; Frequency fudged to give correct C4-C5 chord
+  ld a, HIGH(1046) | %10000000
+  ldh [rNR34], a
+
+  jr WelcomeScroll.return
+
+; Fade in the GBCC logo
+WelcomeFade:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Get the current palette set
+  ld hl, LogoFadeIndex
+  ld a, [hl] ; a = index of palette set to use
+  ; Shift left 5 times to multiply by 32 (size of 1 set of 4 palettes)
+REPT 5
+  sla a
+ENDR
+  ; Set hl to point to the current palette set
+  ld hl, LogoPalettes
+  add l
+  ld l, a
+  jr nc, .continue1
+  inc h
+.continue1
+
+  ; Second palette, auto-increment
+  ld a, %10001000
+  ldh [rBCPS], a
+
+  ld b, 40
+  ld de, rBCPD
+.copyPalette
+  ld a, [hli]
+  ld [de], a
+  dec b
+  jr nz, .copyPalette
+
+  ; Check whether to increment the palette
+  ld hl, FrameCounter
+  ld a, [hl]
+  inc a
+  ld [hl], a ; Increment the frame
+  cp 3 ; Increment the palette & volume every 3 frames
+  jr nz, .return ; Nothing else to do, return
+  xor a
+  ld [hl], a ; Reset frame
+
+  ; Fade in audio
+  ldh a, [rNR50]
+  cp $77
+  jr z, .continue2
+  inc a
+  swap a
+  inc a
+  ldh [rNR50], a ; Volume is stored in bits 0-2 and 4-6, hence inc-swap-inc
+
+.continue2
+  ld hl, LogoFadeIndex
+  ld a, [hl]
+  inc a
+  cp a, 8
+  jr z, .finish
+  ld [hl], a
+  jr .return
+.finish
+  ld hl, FrameCounter
+  xor a
+  ld [hl], a
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(LogoFadeOutAudio)
+  ldi [hl], a
+  ld a, HIGH(LogoFadeOutAudio)
+  ldi [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+
+LogoFadeOutAudio:
+  push af
+  push bc
+  push hl
+
+  ld hl, FrameCounter
+  ld a, [hl]
+  inc a
+  cp 20 ; Start decreasing volume after 20 frame delay
+  ld [hl], a
+  jr c, .return
+  sub 20
+  cp 4 ; Decrease every 4 frames
+  jr nz, .return
+
+  ld a, 20
+  ld [hl], a ; Reset frame counter
+  ldh a, [rNR50]
+  dec a
+  swap a
+  dec a
+  ldh [rNR50], a ; Volume is stored in bits 0-2 and 4-6, hence dec-swap-dec
+  jr nz, .return
+  ; Finished, reset frame counter & install next vblank handler
+  xor a
+  ld hl, rNR10
+  ld b, rNR44 - rNR10
+.zeroAudio ; Stop & reset each channel
+  ldi [hl], a
+  dec b
+  jr nz, .zeroAudio
+  ld a, $77
+  ldh [rNR50], a ; Reset master volume to full
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(ShowStart)
+  ldi [hl], a
+  ld a, HIGH(ShowStart)
+  ldi [hl], a
+.return
+  pop hl
+  pop bc
+  pop af
+  ret
+
+ShowStart:
+  push af
+  push bc
+  push de
+  push hl
+
+  ld hl, FrameCounter
+  ld a, [hl]
+  inc a
+  cp 30 ; Wait 30 frames
+  ld [hl], a
+  jr c, .return
+  cp 31
+  jr c, .show
+  dec a
+  ld [hl], a ; Hold the frame counter here
+  ld hl, rP1
+  ld a, %00010000
+  ld [hl], a
+  ld a, [hl]
+  and $0F ; Check for a button press
+  cp $0F
+  jr nz, .finish
+  ld a, %00100000
+  ld [hl], a
+  ld a, [hl]
+  and $0F ; Check for dpad press
+  cp $0F
+  jr nz, .finish
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+.finish
+  xor a
+  ld [FrameCounter], a ; Reset the frame counter
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(ButtonSetup)
+  ldi [hl], a
+  ld a, HIGH(ButtonSetup)
+  ldi [hl], a
+  jr .return
+
+.show
+  ; Play a high beep
+  xor a
+  ldh [rNR10], a ; No sweep
+  ld a, $80
+  ldh [rNR11], a ; 50% duty, no length
+  ld a, %01000111
+  ldh [rNR12], a ; 50% volume, slow decreasing envelope
+  ld a, LOW(NOTE_C7)
+  ldh [rNR13], a
+  ld a, HIGH(NOTE_C7) | %10000000
+  ldh [rNR14], a
+
+  ; Show the text
+  ld b, 2
+  ld c, 15
+  ld de, PressButtonStr
+  call PrintString
+  jr .return
+
+
+SECTION "Button Test", ROM0
+
+ButtonSetup:
+  push af
+  push bc
+  push de
+  push hl
+
+  ld hl, FrameCounter
+  ld a, [hl]
+  inc a
+  ld [hl], a
+  cp 2
+  jr nc, .frame2
+
+.frame1
+  ; Initialise the animation stage counter
+  xor a
+  ld [WindowAnimStage], a
+  ldh [rVBK], a
+
+  ; Copy over the new tiles, map and attributes
+  ld hl, rHDMA1
+  ; Source: New tiles
+  ld a, HIGH(ButtonScreenTileData)
+  ldi [hl], a
+  ld a, LOW(ButtonScreenTileData)
+  ldi [hl], a
+
+  ; Destination: VRAM tile data
+  ld a, $88
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (ButtonScreenTileDataEnd - ButtonScreenTileData) / 16 - 1
+  ld [hl], a
+
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, ButtonScreenMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (ButtonScreenMapEnd - ButtonScreenMap) / 16 - 1
+  ld [hl], a
+  jr .return
+
+.frame2
+  ; Switch to second VRAM bank for the attributes
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, ButtonScreenAttributes
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (ButtonScreenAttributesEnd - ButtonScreenAttributes) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to first VRAM bank
+  xor a
+  ldh [rVBK], a
+
+  ; Disable sprites
+  ldh a, [rLCDC]
+  and ~2
+  ldh [rLCDC], a
+
+  ; Reset the frame counter
+  xor a
+  ld [FrameCounter], a
+
+  ; Initialise the button check flags
+  xor a
+  ld [ButtonsPressed], a
+
+  ; Initialise the palettes
+  ld a, %10000000
+  ldh [rBCPS], a
+
+  ld b, 32
+  ld hl, ButtonScreenPaletteNotPressed
+  ld de, rBCPD
+.copyPalette
+  ldi a, [hl]
+  ld [de], a
+  dec b
+  jr nz, .copyPalette
+
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(ButtonCheck)
+  ldi [hl], a
+  ld a, HIGH(ButtonCheck)
+  ldi [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+ButtonCheck:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Switch to 2nd VRAM bank, as we'll be editing the attributes
+  ld a, 1
+  ldh [rVBK], a
+
+; Macro to set the correct attributes for each tile of a button when pressed
+; @param b the current value of rP1
+; @param 1 bit of rP1 that represents this button
+; @param 2 bit of ButtonsPressed flag that represents this button
+; @param 3 x-tile to start setting attributes at
+; @param 4 y-tile to start setting attributes at
+; @param 5 width in tiles of region to alter
+; @param 6 height in tiles of region to alter
+HandleButton: MACRO
+  ; Check for current button press
+  bit \1, b
+  jr z, .press\@
+  ; Check for previous button press
+  ld hl, ButtonsPressed
+  ld a, [hl]
+  bit \2, a
+  jr z, .end\@
+  ; Previously pressed palette is no. 1
+  ld c, 1
+  jr .fill\@
+
+.press\@
+  ; Button has been pressed, set the right flag
+  ld hl, ButtonsPressed
+  ld a, [hl]
+  set \2, a
+  ld [hl], a
+
+  ; Pressed palette is no. 2
+  ld c, 2
+
+.fill\@
+  ; Set the colors correctly
+  ld hl, $9800 + (\4 * 32 + \3) ; Tile no. of top-left of A button
+  ld de, 32 - \5 ; preload de with number of bytes to jump each line
+
+REPT \6 ; 3 lines to edit
+REPT \5 ; 3 columns to edit
+  ld a, [hl]
+  and ~3
+  or c
+  ldi [hl], a
+ENDR
+  add hl, de ; next line
+ENDR
+  .end\@
+ENDM
+
+  ; Check for button presses
+  ld hl, rP1
+  ld a, %00010000
+  ld [hl], a
+  ld a, [hl]
+  ld b, a
+
+  HandleButton 0,0,16,7,3,3 ; A
+  HandleButton 1,1,12,8,3,3 ; B
+  HandleButton 2,2,6,16,3,1 ; Start
+  HandleButton 3,3,11,16,3,1 ; Select
+
+  ; Same for DPAD
+  ld hl, rP1
+  ld a, %00100000
+  ld [hl], a
+  ld a, [hl]
+  ld b, a
+
+  HandleButton 0,4,5,8,2,2 ; Right
+  HandleButton 1,5,1,8,2,2 ; Left
+  HandleButton 2,6,3,6,2,2 ; Up
+  HandleButton 3,7,3,10,2,2 ; Down
+
+  ; Reset VRAM bank
+  xor a
+  ldh [rVBK], a
+
+  ; Check if every button has been pressed
+  ld hl, ButtonsPressed
+  ld a, [hl]
+  cp $FF
+  jr nz, .return
+
+  ; We've finished, install the next handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(ButtonYeahSetup)
+  ldi [hl], a
+  ld a, HIGH(ButtonYeahSetup)
+  ldi [hl], a
+
+  ; Reset the frame counter
+  xor a
+  ld [FrameCounter], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+ButtonYeahSetup:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Set up the animation
+  ; Display the window starting at x = 0
+  ld a, 7
+  ldh [rWX], a
+  xor a
+  ldh [rWY], a
+
+  ; The window will use the second tilemap, beginning at $9C00
+  ld hl, rLCDC
+  ld a, [hl]
+  set 6, a
+  ld [hl], a
+
+  ; First we copy our new map into the first VRAM bank
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, YeahMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: 2nd VRAM tile map
+  ld a, $9C
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (YeahMapEnd - YeahMap) / 16 - 1
+  ld [hl], a
+
+  ; Copy in our tile data and attributes to the second VRAM bank
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New tiles
+  ld a, HIGH(YeahTileData)
+  ldi [hl], a
+  ld a, LOW(YeahTileData)
+  ldi [hl], a
+
+  ; Destination: VRAM tile data
+  ld a, $80
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (YeahTileDataEnd - YeahTileData) / 16 - 1
+  ld [hl], a
+
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, YeahAttributes
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: 2nd VRAM tile map
+  ld a, $9C
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (YeahAttributesEnd - YeahAttributes) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to 1st bank
+  xor a
+  ldh [rVBK], a
+
+  ; Install the LYC handler
+  ld hl, LCDSTAT_ADDRESS+1
+  ld a, LOW(WindowLYC)
+  ldi [hl], a
+  ld a, HIGH(WindowLYC)
+  ldi [hl], a
+
+  ; To begin with, we have just a single pixel line at y=72
+  ld hl, WindowLYStart
+  ld a, 72
+  ldi [hl], a
+  inc a
+  ld [hl], a
+
+  ; Set the initial LYC
+  ld a, 72
+  ldh [rLYC], a
+
+  ; Enable the LY=LYC interrupt
+  ld hl, rSTAT
+  ld a, [hl]
+  set 6, a
+  ld [hl], a
+
+  ld hl, rIE
+  ld a, [hl]
+  set 1, a
+  ld [hl], a
+
+  ; Set the next vblank handler to use after the window animation has finished
+  ld hl, WindowAnimNextHandler
+  ld a, LOW(IngameMenu)
+  ldi [hl], a
+  ld a, HIGH(IngameMenu)
+  ld [hl], a
+
+  ; We've finished, start the window animation
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(WindowVBlank)
+  ldi [hl], a
+  ld a, HIGH(WindowVBlank)
+  ldi [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+
+WindowVBlank:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Check the current animation stage
+  ld hl, WindowAnimStage
+  ld a, [hl]
+  or a
+  jr z, .expand
+  dec a
+  jr z, .wait
+  dec a
+  jr z, .shrink
+  jr .finish
+
+.expand
+  ; Expand the window out from the center
+  ld b, 3 ; b = pixels per frame in each direction
+  ld hl, WindowLYStart
+  ld a, [hl]
+  sub b
+  cp 40
+  jr c, .nextStage
+  ld [hl], a
+  ldh [rLYC], a ; Reset LYC to the start line
+  ld hl, WindowLYStop
+  ld a, [hl]
+  add b
+  ld [hl], a
+  jr .return
+
+.wait
+  ld hl, FrameCounter
+  ld a, [hl]
+  inc a
+  ld [hl], a
+  cp 30
+  jr z, .nextStage
+  jr .return
+
+.shrink
+  ; Shrink the window back to the center
+  ld b, 3 ; b = pixels per frame in each direction
+  ld hl, WindowLYStart
+  ld a, [hl]
+  add b
+  cp 72
+  jr z, .nextStage
+  ld [hl], a
+  ldh [rLYC], a ; Reset LYC to the start line
+  ld hl, WindowLYStop
+  ld a, [hl]
+  sub b
+  ld [hl], a
+  jr .return
+
+.nextStage
+  ; We're finished with this step, go to the next
+  ld hl, WindowAnimStage
+  ld a, [hl]
+  inc a
+  ld [hl], a
+.return
+  ld a, [WindowLYStart]
+  ldh [rLYC], a ; Reset LYC to the start line
+
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+.finish
+  ; Disable the STAT interrupt and the window
+  ldh a, [rSTAT]
+  res 6, a
+  ldh [rSTAT], a
+  ldh a, [rLCDC]
+  res 5, a
+  ldh [rLCDC], a
+
+  ; Clear the frame counter
+  xor a
+  ld [FrameCounter], a
+
+  ; Install the next vblank handler
+  ld bc, WindowAnimNextHandler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, [bc]
+  ldi [hl], a
+  inc bc
+  ld a, [bc]
+  ld [hl], a
+  jr .return
+
+
+WindowLYC:
+  push af
+  push bc
+  push de
+  push hl
+
+  ldh a, [rLCDC]
+  ld e, a ; e = current LCDC value
+  ldh a, [rLY] ; a = current LY
+  ld hl, WindowLYStart
+  ld b, [hl] ; b = initial LY
+  inc hl
+  ld c, [hl] ; c = end LY
+  ld hl, rSTAT ; preload hl with STAT so we can wait for HBlank
+  ld d, 3 ; d = mask for STAT mode
+  set 5, e ; e = LCDC with window enabled
+  cp b
+  jr z, .waitHBlank ; We're at the beginning, enable the window
+  res 5, e ; e = LCDC with window disabled
+  cp c
+  jr z, .waitHBlank ; We're at the end, disable the window
+  jr .return ; Something went wrong - return
+
+.waitHBlank
+  ; Wait for HBlank
+  ld a, [hl]
+  and d
+  jr nz, .waitHBlank
+
+  ; Set the window visibility
+  ld a, e
+  ldh [rLCDC], a
+
+  ; If this was the start, set LYC to be the end
+  bit 5, e
+  jr z, .return
+  ld a, c
+  ldh [rLYC], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+IngameMenu:
+  push af
+  push bc
+  push de
+  push hl
+
+  ld hl, FrameCounter
+  ld a, [hl]
+  or a
+  jr nz, .check
+  inc a
+  ld [hl], a
+
+  ; Setup the screen
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, IngameMenuMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (IngameMenuMapEnd - IngameMenuMap) / 16 - 1
+  ld [hl], a
+
+  ; Switch to second VRAM bank for the attributes
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, BlankScreen
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (BlankScreenEnd - BlankScreen) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to first VRAM bank
+  xor a
+  ldh [rVBK], a
+
+  ; Initialise the pause detection
+  call ReadMinSec
+
+  ld hl, LastTime
+  ld a, c
+  ldi [hl], a
+  ld a, b
+  ld [hl], a
+
+  jr .return
+
+.check
+  call ReadMinSec
+
+  ; Pause detection works by checking if the current time is at least 2 seconds
+  ; ahead of the time stored in LastTime
+  ; (i.e. the last frame took longer than 2 seconds)
+  ld d, 0 ; Use d as a flag for minute rollover
+  ld hl, LastTime
+  ld a, c
+  sub [hl]
+  jr nc, .compSec1
+  ; There was a carry (the minute has rolled over), so add 60 to the result and
+  ; flag it in d
+  add 60
+  ld d, 1
+.compSec1
+  ; Check if the difference was at least 2 seconds, and finish this screen if
+  ; it was
+  cp 2
+  jr nc, .finish
+
+  ; Otherwise we need to check the minute counter, as we could have been paused
+  ; for over a minute
+  inc hl
+  ld a, b
+  sub [hl]
+  jr nc, .compSec2
+  ; There was a carry (the hour has rolled over), so add 60 to the result
+  add 60
+.compSec2
+  ; We've waited long enough if:
+  ;   - New minute > old minute, if d = 0
+  ;   - New minute > old minute + 1, if d = 1
+  ; Thus, if (New minute - old minute) > d, we're done
+  inc d
+  cp d
+  jr nc, .finish
+
+  ; Otherwise, store the new time and return
+  ld a, b
+  ldd [hl], a
+  ld a, c
+  ld [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+.finish
+  ; Clear the frame counter
+  xor a
+  ld [FrameCounter], a
+
+  ; Reset the window animation
+  xor a
+  ld [WindowAnimStage], a
+
+  ; Install the next vblank handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(MenuCoolSetup)
+  ldi [hl], a
+  ld a, HIGH(MenuCoolSetup)
+  ldi [hl], a
+  jr .return
+
+
+MenuCoolSetup:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Set up the animation
+  ; Display the window starting at x = 0
+  ld a, 7
+  ldh [rWX], a
+  xor a
+  ldh [rWY], a
+
+  ; The window will use the second tilemap, beginning at $9C00
+  ld hl, rLCDC
+  ld a, [hl]
+  set 6, a
+  ld [hl], a
+
+  ; First we copy our new map into the first VRAM bank
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, CoolMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: 2nd VRAM tile map
+  ld a, $9C
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (CoolMapEnd - CoolMap) / 16 - 1
+  ld [hl], a
+
+  ; Copy in our tile data and attributes to the second VRAM bank
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New tiles
+  ld a, HIGH(CoolTileData)
+  ldi [hl], a
+  ld a, LOW(CoolTileData)
+  ldi [hl], a
+
+  ; Destination: VRAM tile data
+  ld a, $80
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (CoolTileDataEnd - CoolTileData) / 16 - 1
+  ld [hl], a
+
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, CoolAttributes
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: 2nd VRAM tile map
+  ld a, $9C
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (CoolAttributesEnd - CoolAttributes) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to 1st bank
+  xor a
+  ldh [rVBK], a
+
+  ; Install the LYC handler
+  ld hl, LCDSTAT_ADDRESS+1
+  ld a, LOW(WindowLYC)
+  ldi [hl], a
+  ld a, HIGH(WindowLYC)
+  ldi [hl], a
+
+  ; To begin with, we have just a single pixel line at y=72
+  ld hl, WindowLYStart
+  ld a, 72
+  ldi [hl], a
+  inc a
+  ld [hl], a
+
+  ; Set the initial LYC
+  ld a, 72
+  ldh [rLYC], a
+
+  ; Enable the LY=LYC interrupt
+  ld hl, rSTAT
+  ld a, [hl]
+  set 6, a
+  ld [hl], a
+
+  ld hl, rIE
+  ld a, [hl]
+  set 1, a
+  ld [hl], a
+
+  ; Set the next vblank handler to use after the window animation has finished
+  ld hl, WindowAnimNextHandler
+  ld a, LOW(RearrangeLayout)
+  ldi [hl], a
+  ld a, HIGH(RearrangeLayout)
+  ld [hl], a
+
+  ; Start the animation
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(WindowVBlank)
+  ldi [hl], a
+  ld a, HIGH(WindowVBlank)
+  ldi [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+RearrangeLayout:
+  push af
+  push bc
+  push de
+  push hl
+
+  ld hl, FrameCounter
+  ld a, [hl]
+  or a
+  jr nz, .check
+  inc a
+  ld [hl], a
+
+  ; Setup the screen
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, RearrangeLayoutMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (RearrangeLayoutMapEnd - RearrangeLayoutMap) / 16 - 1
+  ld [hl], a
+
+  ; Switch to second VRAM bank for the attributes
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, BlankScreen
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (BlankScreenEnd - BlankScreen) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to first VRAM bank
+  xor a
+  ldh [rVBK], a
+
+  ; Initialise the pause detection
+  call ReadMinSec
+
+  ld hl, LastTime
+  ld a, c
+  ldi [hl], a
+  ld a, b
+  ld [hl], a
+
+  jr .return
+
+.check
+  call ReadMinSec
+
+  ; Pause detection works by checking if the current time is at least 2 seconds
+  ; ahead of the time stored in LastTime
+  ; (i.e. the last frame took longer than 2 seconds)
+  ld d, 0 ; Use d as a flag for minute rollover
+  ld hl, LastTime
+  ld a, c
+  sub [hl]
+  jr nc, .compSec1
+  ; There was a carry (the minute has rolled over), so add 60 to the result and
+  ; flag it in d
+  add 60
+  ld d, 1
+.compSec1
+  ; Check if the difference was at least 2 seconds, and finish this screen if
+  ; it was
+  cp 2
+  jr nc, .finish
+
+  ; Otherwise we need to check the minute counter, as we could have been paused
+  ; for over a minute
+  inc hl
+  ld a, b
+  sub [hl]
+  jr nc, .compSec2
+  ; There was a carry (the hour has rolled over), so add 60 to the result
+  add 60
+.compSec2
+  ; We've waited long enough if:
+  ;   - New minute > old minute, if d = 0
+  ;   - New minute > old minute + 1, if d = 1
+  ; Thus, if (New minute - old minute) > d, we're done
+  inc d
+  cp d
+  jr nc, .finish
+
+  ; Otherwise, store the new time and return
+  ld a, b
+  ldd [hl], a
+  ld a, c
+  ld [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+.finish
+  ; Clear the frame counter
+  xor a
+  ld [FrameCounter], a
+
+  ; Reset the window animation
+  xor a
+  ld [WindowAnimStage], a
+
+  ; Install the next vblank handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(RearrangeRadSetup)
+  ldi [hl], a
+  ld a, HIGH(RearrangeRadSetup)
+  ldi [hl], a
+  jr .return
+
+
+RearrangeRadSetup:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Set up the animation
+  ; Display the window starting at x = 0
+  ld a, 7
+  ldh [rWX], a
+  xor a
+  ldh [rWY], a
+
+  ; The window will use the second tilemap, beginning at $9C00
+  ld hl, rLCDC
+  ld a, [hl]
+  set 6, a
+  ld [hl], a
+
+  ; First we copy our new map into the first VRAM bank
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, RadMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: 2nd VRAM tile map
+  ld a, $9C
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (RadMapEnd - RadMap) / 16 - 1
+  ld [hl], a
+
+  ; Copy in our tile data and attributes to the second VRAM bank
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New tiles
+  ld a, HIGH(RadTileData)
+  ldi [hl], a
+  ld a, LOW(RadTileData)
+  ldi [hl], a
+
+  ; Destination: VRAM tile data
+  ld a, $80
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (RadTileDataEnd - RadTileData) / 16 - 1
+  ld [hl], a
+
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, RadAttributes
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: 2nd VRAM tile map
+  ld a, $9C
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (RadAttributesEnd - RadAttributes) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to 1st bank
+  xor a
+  ldh [rVBK], a
+
+  ; Install the LYC handler
+  ld hl, LCDSTAT_ADDRESS+1
+  ld a, LOW(WindowLYC)
+  ldi [hl], a
+  ld a, HIGH(WindowLYC)
+  ldi [hl], a
+
+  ; To begin with, we have just a single pixel line at y=72
+  ld hl, WindowLYStart
+  ld a, 72
+  ldi [hl], a
+  inc a
+  ld [hl], a
+
+  ; Set the initial LYC
+  ld a, 72
+  ldh [rLYC], a
+
+  ; Enable the LY=LYC interrupt
+  ld hl, rSTAT
+  ld a, [hl]
+  set 6, a
+  ld [hl], a
+
+  ld hl, rIE
+  ld a, [hl]
+  set 1, a
+  ld [hl], a
+
+  ; Set the next vblank handler to use after the window animation has finished
+  ld hl, WindowAnimNextHandler
+  ld a, LOW(TurboSetup)
+  ldi [hl], a
+  ld a, HIGH(TurboSetup)
+  ld [hl], a
+
+  ; Start the animation
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(WindowVBlank)
+  ldi [hl], a
+  ld a, HIGH(WindowVBlank)
+  ldi [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+TurboSetup:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Setup the screen
+  ; Copy over the new tiles, map and attributes
+  ld hl, rHDMA1
+  ; Source: New tiles
+  ld a, HIGH(TurboButtonTileData)
+  ldi [hl], a
+  ld a, LOW(TurboButtonTileData)
+  ldi [hl], a
+
+  ; Destination: VRAM tile data
+  ld a, $88
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (TurboButtonTileDataEnd - TurboButtonTileData) / 16 - 1
+  ld [hl], a
+
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, TurboButtonMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (TurboButtonMapEnd - TurboButtonMap) / 16 - 1
+  ld [hl], a
+
+  ; Switch to second VRAM bank for the attributes
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, BlankScreen
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (BlankScreenEnd - BlankScreen) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to first VRAM bank
+  xor a
+  ldh [rVBK], a
+
+  ; Initialise the time
+  call ReadMinSec
+  ld hl, LastTime
+  ld a, c
+  ldi [hl], a
+  ld a, b
+  ld [hl], a
+
+  ; Install the next handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(TurboDetect)
+  ldi [hl], a
+  ld a, HIGH(TurboDetect)
+  ldi [hl], a
+
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+
+TurboAnimationUpdate:
+  ld hl, FrameCounter2
+  ld a, [hl]
+  inc a
+  ld [hl], a
+
+  ; Copy in our attributes to the second VRAM bank
+  ;ld a, 1
+  ;ldh [rVBK], a
+
+  ; Point HL to the top-left corner of the image to update
+  ld hl, $9800 + (32 * 14 + 8) ; y=14, x=8
+  ; Store in de for later
+  ld d, h
+  ld e, l
+
+  ld bc, 31 ; To move hl down one line & back one tile
+
+  ; Divide frame by 16, then only look at bottom two bits
+  swap a
+  and $03
+
+.Frame1
+  bit 0,a ; Frames 1 & 3 are the same
+  jr nz, .Frame2
+
+  ld a, $80
+  ldi [hl], a
+  inc a
+  ld [hl], a
+  inc a
+
+  add hl, bc
+
+  ldi [hl], a
+  ld [hl], a
+
+  ; Reset hl for the attributes
+  ld h, d
+  ld l, e
+
+  ld a, 1
+  ldh [rVBK], a
+
+  ; Bottom right tile is flipped
+  xor a
+  ldi [hl], a
+  ld [hl], a
+
+  add hl, bc
+
+  ldi [hl], a
+  ld a, $20
+  ld [hl], a
+
+  xor a
+  ldh [rVBK], a
+
+  jr .return
+.Frame2
+  cp $01
+  jr nz, .Frame4
+
+  ld a, $83
+  ldi [hl], a
+  inc a
+  ld [hl], a
+  inc a
+
+  add hl, bc
+  ldi [hl], a
+  inc a
+  ld [hl], a
+
+  ; Reset hl for the attributes
+  ld h, d
+  ld l, e
+
+  ld a, 1
+  ldh [rVBK], a
+
+  xor a
+  ldi [hl], a
+  ld [hl], a
+
+  add hl, bc
+  ldi [hl], a
+  ld [hl], a
+
+  xor a
+  ldh [rVBK], a
+
+  jr .return
+.Frame4
+  ld a, $83
+  ldi [hl], a
+  inc a
+  ld [hl], a
+  inc a
+  inc a
+
+  add hl, bc
+  ldi [hl], a
+  dec a
+  ld [hl], a
+
+  ; Reset hl for the attributes
+  ld h, d
+  ld l, e
+
+  ld a, 1
+  ldh [rVBK], a
+
+  xor a
+  ldi [hl], a
+  ld [hl], a
+
+  add hl, bc
+  ld a, $20
+  ldi [hl], a
+  ld [hl], a
+
+  xor a
+  ldh [rVBK], a
+
+.return
+  ret
+
+TurboDetect:
+  push af
+  push bc
+  push de
+  push hl
+
+  call TurboAnimationUpdate
+
+  ld hl, FrameCounter
+  ld a, [hl]
+  inc a
+  cp 62 ; If there were 62 or more frames within this second, we're turboing.
+  jr nc, .finish
+  ld [hl], a
+
+  call ReadMinSec
+
+  ; Reset the frame counter each second
+  ld hl, LastTime
+  ld a, c
+  cp [hl]
+  jr z, .cont
+  ; Second has changed, so reset the frame counter
+  xor a
+  ld [FrameCounter], a
+.cont
+  ; Store the new time and return
+  ld a, c
+  ldi [hl], a
+  ld a, b
+  ld [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+.finish
+  ; Install the next handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(TurboStopDetect)
+  ldi [hl], a
+  ld a, HIGH(TurboStopDetect)
+  ldi [hl], a
+  jr .return
+
+
+TurboStopDetect:
+  push af
+  push bc
+  push de
+  push hl
+
+  call TurboAnimationUpdate
+
+  ld hl, FrameCounter
+  inc [hl]
+  ld d, [hl] ; d = frame count
+
+  call ReadMinSec
+
+  ; Check if there were between 59-61 frames this second
+  ; If so, we're not turboing (hopefully)
+  ld hl, LastTime
+  ld a, c
+  cp [hl]
+  jr z, .cont
+  ; Second has changed, so reset the frame counter and check the old value
+  xor a
+  ld [FrameCounter], a ; Reset the frame counter
+  ld a, d
+  cp 62
+  jr nc, .cont ; 62 or more frames, still turboing
+  cp 59
+  jr c, .cont ; less than 59 frames, probably just started this section so skip
+  jr .finish ; 59 <= Nframes <= 61, so finish
+.cont
+  ; Store the new time and return
+  ld a, c
+  ldi [hl], a
+  ld a, b
+  ld [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+.finish
+  ; Install the next handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(TurboNiceSetup)
+  ldi [hl], a
+  ld a, HIGH(TurboNiceSetup)
+  ldi [hl], a
+  jr .return
+
+
+TurboNiceSetup:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Set up the animation
+  ; Display the window starting at x = 0
+  ld a, 7
+  ldh [rWX], a
+  xor a
+  ldh [rWY], a
+
+  ; The window will use the second tilemap, beginning at $9C00
+  ld hl, rLCDC
+  ld a, [hl]
+  set 6, a
+  ld [hl], a
+
+  ; First we copy our new map into the first VRAM bank
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, NiceMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: 2nd VRAM tile map
+  ld a, $9C
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (NiceMapEnd - NiceMap) / 16 - 1
+  ld [hl], a
+
+  ; Copy in our tile data and attributes to the second VRAM bank
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New tiles
+  ld a, HIGH(NiceTileData)
+  ldi [hl], a
+  ld a, LOW(NiceTileData)
+  ldi [hl], a
+
+  ; Destination: VRAM tile data
+  ld a, $80
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (NiceTileDataEnd - NiceTileData) / 16 - 1
+  ld [hl], a
+
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, NiceAttributes
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: 2nd VRAM tile map
+  ld a, $9C
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (NiceAttributesEnd - NiceAttributes) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to 1st bank
+  xor a
+  ldh [rVBK], a
+
+  ; Install the LYC handler
+  ld hl, LCDSTAT_ADDRESS+1
+  ld a, LOW(WindowLYC)
+  ldi [hl], a
+  ld a, HIGH(WindowLYC)
+  ldi [hl], a
+
+  ; To begin with, we have just a single pixel line at y=72
+  ld hl, WindowLYStart
+  ld a, 72
+  ldi [hl], a
+  inc a
+  ld [hl], a
+
+  ; Set the initial LYC
+  ld a, 72
+  ldh [rLYC], a
+
+  ; Enable the LY=LYC interrupt
+  ld hl, rSTAT
+  ld a, [hl]
+  set 6, a
+  ld [hl], a
+
+  ld hl, rIE
+  ld a, [hl]
+  set 1, a
+  ld [hl], a
+
+  ; Clear the frame counter
+  xor a
+  ld [FrameCounter], a
+
+  ; Reset the window animation
+  xor a
+  ld [WindowAnimStage], a
+
+  ; Set the next vblank handler to use after the window animation has finished
+  ld hl, WindowAnimNextHandler
+  ld a, LOW(FinalScreen)
+  ldi [hl], a
+  ld a, HIGH(FinalScreen)
+  ld [hl], a
+
+  ; Start the animation
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(WindowVBlank)
+  ldi [hl], a
+  ld a, HIGH(WindowVBlank)
+  ldi [hl], a
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+
+FinalScreen:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Setup the screen
+  ld hl, rHDMA1
+  ; Source: New map
+  ld bc, FinalScreenMap
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+  ; / 16 - 1 to convert to hdma length
+  ld a, (FinalScreenMapEnd - FinalScreenMap) / 16 - 1
+  ld [hl], a
+
+  ; Switch to second VRAM bank for the attributes
+  ld a, 1
+  ldh [rVBK], a
+
+  ld hl, rHDMA1
+  ; Source: New attributes
+  ld bc, BlankScreen
+  ld a, b
+  ldi [hl], a
+  ld a, c
+  ldi [hl], a
+
+  ; Destination: VRAM tile map
+  ld a, $98
+  ldi [hl], a
+  xor a
+  ldi [hl], a
+
+  ; / 16 - 1 to convert to hdma length
+  ld a, (BlankScreenEnd - BlankScreen) / 16 - 1
+  ld [hl], a
+
+  ; Switch back to first VRAM bank
+  xor a
+  ldh [rVBK], a
+
+  ; We're done; install the final handler
+  ld hl, VBLANK_ADDRESS+1
+  ld a, LOW(FinalScreenStart)
+  ldi [hl], a
+  ld a, HIGH(FinalScreenStart)
+  ldi [hl], a
+
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+
+FinalScreenStart:
+  push af
+  push bc
+  push de
+  push hl
+
+  ; Check if start is pressed
+  ld hl, rP1
+  ld a, %00010000
+  ld [hl], a
+  ld a, [hl]
+  and %00001000 ; Check for start
+  cp %00001000
+  jr z, .return
+
+  ; Reset the tutorial
+  pop hl
+  pop de
+  pop bc
+  pop af
+  jp $0100
+
+.return
+  pop hl
+  pop de
+  pop bc
+  pop af
+  ret
+
+SECTION "Functions", ROM0
+
+; Copy some data
+; @param hl Pointer to destination
+; @param de Pointer to start of source data
+; @param bc Number of bytes to copy
+; @return a Zero
+; @return hl Pointer to first byte after end of destination
+; @return de Pointer to first byte after end of source
+; @return bc Zero
+Memcpy:
+  ld a, [de]
+  ld [hli], a
+  inc de
+  dec bc
+  ld a, b ; Check if count is 0, as `dec bc` doesn't update flags
+  or c
+  jr nz, Memcpy
+  ret
+
+; Display a string on the screen
+; @param b The x tile co-ordinate to start printing at
+; @param c The y tile co-ordinate to start printing at
+; @param de A pointer to the string to be printed
+; @return de A pointer to the byte after the source string's terminating byte
+; @return hl A pointer to the byte after the last copied byte
+; @return a Garbage
+; @return flags C reset, Z set
+PrintString:
+  ; Set h to contain upper byte of tile number (32 * c + b)
+  ld h, c
+  srl h
+  srl h
+  srl h
+  ; And l to contain lower byte
+  ld a, c
+  sla a
+  sla a
+  sla a
+  sla a
+  sla a
+  add b
+  ld l, a
+  push bc
+  ld bc, $9800  ; Beginning of background tile map
+  add hl, bc
+  call Strcpy
+  pop bc
+  ret
+
+
+; Copy a string up to but not including the first NUL character
+; @param de A pointer to the string to be copied
+; @param hl A pointer to the beginning of the destination buffer
+; @return de A pointer to the byte after the source string's terminating byte
+; @return hl A pointer to the byte after the last copied byte
+; @return a Zero
+; @return flags C reset, Z set
+Strcpy:
+  ld a, [de]
+  inc de
+  and a
+  ret z
+  ld [hli], a
+  jr Strcpy
+
+; Read the current RTC minutes & seconds into register bc
+; @return b Minutes
+; @return c Seconds
+; @return a Zero
+ReadMinSec:
+  ; Enable reading/writing RTC and SRAM
+  ld a, $0A
+  ld [$0000], a
+
+  ; Latch the RTC registers by writing 0 then 1 to $6000-$7FFF
+  xor a
+  ld [$6000], a
+  inc a
+  ld [$6000], a
+
+  ; Read the seconds into register c
+  ld a, $08
+  ld [$4000], a ; Select seconds
+
+  ld a, [$A000]
+  ld c, a
+
+  ; Read the minutes into register b
+  ld a, $09
+  ld [$4000], a ; Select minutes
+
+  ld a, [$A000]
+  ld b, a
+
+  ; Disable RTC access
+  xor a
+  ld [$0000], a
+
+  ret
+
+
+SECTION "Strings", ROM0
+
+WelcomeStr:
+  db "Welcome to", 0
+WelcomeStrEnd:
+
+PressButtonStr:
+  db "Press any button", 0
+
+ButtonScreenStr:
+  db "Try pressing each", 0
+  db "of the buttons", 0
+  db "shown below.", 0
+
+
+SECTION "Palettes", ROM0
+
+ButtonScreenPaletteNotPressed:
+  db $29, $25
+  db $29, $25
+  db $FF, $7F
+  db $FF, $7F
+
+ButtonScreenPaletteNormal:
+  db $29, $25
+  db $31, $46
+  db $FF, $7F
+  db $FF, $7F
+
+ButtonScreenPalettePressed:
+  db $29, $25
+  db $FF, $00
+  db $FF, $7F
+  db $FF, $7F
+
+ButtonScreenPaletteYeah:
+  db $00, $00
+  db $07, $1D
+  db $F7, $5E
+  db $FF, $7F
+
+LogoSpritePalettes:
+.text
+  db $29, $25
+  db $29, $25
+  db $29, $25
+  db $FF, $FF
+
+
+SECTION "GBCC Logo Tiles", ROM0
+
+GBCCLogo:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$03
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FE,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$80,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$0B,$07,$3F,$1F,$7F,$3F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FE,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$40,$80,$F0,$E0,$F0,$F8
+  db $00,$00,$00,$00,$00,$00,$00,$01,$01,$03,$07,$07,$07,$0F,$0F,$1F
+  db $17,$0F,$5F,$3F,$7F,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FE,$FF
+  db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$E7,$FF,$81,$00
+  db $D0,$E0,$F0,$F8,$FE,$FC,$FE,$FE,$FF,$FE,$FE,$FF,$FE,$FF,$7E,$FE
+  db $3F,$7F,$3F,$7F,$3F,$7F,$3F,$7F,$3F,$7F,$3F,$7F,$7F,$3F,$3F,$3F
+  db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$E3,$FF,$E0,$C1,$E0,$C0,$E0,$C0
+  db $FC,$FC,$FE,$FE,$FE,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$7F,$3F,$7F
+  db $00,$00,$00,$00,$00,$00,$80,$00,$00,$80,$80,$80,$C0,$80,$80,$C0
+  db $00,$00,$00,$00,$00,$00,$00,$01,$07,$03,$07,$0F,$0F,$1F,$1F,$3F
+  db $00,$00,$03,$0F,$3F,$7F,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$F8,$FE,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$80,$C0,$E0,$F0,$F0,$F8,$FC,$F8,$F8,$FC,$F8,$FC
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$01,$03
+  db $00,$00,$01,$00,$03,$07,$1F,$0F,$1F,$3F,$FF,$7F,$FF,$FF,$FF,$FF
+  db $10,$0F,$7F,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$C0,$F0,$F8,$FD,$FE,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$80,$E0,$C0,$E0,$E0,$E0,$F0,$F0,$F0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$01,$01,$03,$01
+  db $1F,$3F,$7F,$3F,$3F,$7F,$7F,$FF,$FF,$FF,$FF,$FF,$FE,$FF,$FE,$FE
+  db $FA,$FC,$F0,$F8,$F0,$E0,$E0,$C0,$C0,$80,$00,$80,$00,$00,$00,$00
+  db $5C,$3E,$04,$08,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $3F,$3F,$3F,$3F,$3F,$3F,$1F,$3F,$1F,$3F,$1F,$3F,$1F,$3F,$1F,$3F
+  db $C0,$E0,$C0,$E0,$C0,$E0,$C0,$E0,$E0,$E0,$E1,$E0,$E1,$E3,$EB,$E7
+  db $3F,$7F,$7F,$3F,$7F,$3F,$3F,$7F,$FF,$7F,$FF,$FF,$FF,$FF,$FF,$FF
+  db $80,$C0,$80,$C0,$80,$C0,$80,$C0,$80,$C0,$C0,$80,$80,$80,$00,$80
+  db $00,$00,$00,$00,$00,$01,$01,$01,$01,$03,$07,$03,$07,$07,$0F,$07
+  db $3F,$7F,$7F,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FE,$FF,$FE,$FE,$FC,$FC
+  db $FF,$FF,$FC,$FF,$F0,$F8,$C0,$E0,$C0,$80,$00,$00,$00,$00,$00,$00
+  db $FF,$FF,$93,$0F,$00,$01,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FC,$F8,$F8,$F8,$F8,$F0,$60,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $03,$07,$07,$0F,$1F,$0F,$1F,$1F,$1F,$3F,$7F,$3F,$3F,$7F,$FF,$7F
+  db $FF,$FF,$FF,$FF,$FE,$FF,$FA,$FC,$F0,$F8,$E0,$F0,$C0,$E0,$C0,$C0
+  db $F0,$FF,$80,$C0,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $7F,$FF,$2F,$1F,$0F,$07,$01,$03,$00,$00,$00,$00,$00,$00,$00,$00
+  db $F0,$F0,$F0,$F0,$E0,$F0,$C0,$E0,$00,$00,$00,$00,$00,$00,$00,$00
+  db $01,$03,$03,$03,$03,$07,$07,$07,$07,$07,$0F,$07,$07,$0F,$07,$0F
+  db $FC,$FE,$FC,$FC,$F8,$FC,$FC,$F8,$F8,$F8,$F0,$F8,$F8,$F0,$F0,$F0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$04,$03,$3F,$1F,$7F,$3F,$3F,$7F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$20,$C0,$FA,$FC,$FE,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$80,$00,$80,$C0
+  db $3F,$1F,$3F,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$0F,$1F
+  db $EF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $FF,$FF,$FF,$FE,$FC,$FE,$F8,$FC,$F0,$F8,$FE,$FC,$FF,$FE,$FF,$FF
+  db $07,$0F,$1F,$0F,$0F,$1F,$1F,$1F,$1F,$1F,$3F,$1F,$1F,$3F,$1F,$3F
+  db $FC,$F8,$F0,$F8,$F0,$F0,$E0,$F0,$F0,$E0,$E0,$E0,$C0,$E0,$C0,$E0
+  db $00,$00,$01,$00,$00,$01,$01,$01,$03,$01,$01,$03,$01,$03,$03,$03
+  db $7F,$FF,$FF,$FF,$FF,$FF,$FE,$FF,$FE,$FE,$FC,$FE,$FC,$FE,$FC,$FC
+  db $C0,$80,$00,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F
+  db $F0,$F0,$F0,$F0,$E0,$F0,$E0,$F0,$E0,$F0,$F0,$F0,$F0,$F0,$F0,$F0
+  db $7F,$7F,$7F,$7F,$7F,$7F,$3F,$7F,$20,$1F,$00,$00,$00,$00,$00,$00
+  db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$1F,$FF,$1F,$0F,$07,$0F,$0F,$0F
+  db $C0,$E0,$F0,$E0,$E0,$F0,$F0,$F0,$F8,$F0,$F0,$F8,$F8,$F0,$F8,$F0
+  db $0F,$1F,$0F,$1F,$0F,$1F,$0F,$1F,$0F,$1F,$0F,$1F,$0F,$1F,$0F,$1F
+  db $FF,$FF,$F7,$FF,$F2,$F1,$F0,$F0,$E0,$F0,$E0,$F0,$E0,$F0,$E0,$F0
+  db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$7F,$7F,$3F,$3F,$1F,$1F,$0F,$07,$0F
+  db $C0,$80,$C0,$C0,$C0,$E0,$F0,$E0,$E0,$F0,$F0,$F0,$F0,$F8,$F0,$F8
+  db $3F,$3F,$3F,$3F,$3F,$3F,$3F,$3F,$3F,$3F,$1F,$3F,$1F,$3F,$3F,$1F
+  db $E0,$C0,$E0,$C0,$E0,$C0,$E0,$C0,$C0,$E0,$C0,$E0,$E0,$E0,$F0,$E0
+  db $03,$03,$03,$03,$07,$03,$07,$03,$07,$03,$07,$03,$03,$03,$03,$03
+  db $FC,$FC,$FC,$FC,$F8,$FC,$F8,$FC,$F8,$FC,$F8,$FC,$FC,$FC,$FC,$FC
+  db $07,$0F,$07,$0F,$07,$07,$03,$07,$07,$03,$03,$03,$03,$01,$00,$01
+  db $F8,$F0,$F0,$F8,$F8,$F8,$F8,$FC,$FC,$FE,$FE,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$C0,$80,$E8,$F0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$05,$03,$2F,$1F
+  db $1F,$0F,$0F,$1F,$3F,$1F,$7F,$3F,$FF,$7F,$FF,$FF,$FF,$FF,$FF,$FF
+  db $F0,$F0,$F0,$F0,$E0,$F0,$F0,$E0,$E0,$E0,$C0,$E0,$C0,$C0,$C0,$80
+  db $E0,$F0,$E0,$F0,$E0,$F0,$E0,$F0,$E0,$F0,$E0,$F0,$F0,$E0,$E0,$E0
+  db $07,$0F,$07,$07,$07,$07,$07,$07,$07,$0F,$0F,$0F,$0F,$1F,$1F,$3F
+  db $F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F0,$F8,$F8,$F0,$F0,$F0
+  db $1F,$1F,$0F,$1F,$1F,$0F,$0F,$0F,$07,$0F,$07,$07,$07,$03,$01,$03
+  db $E0,$F0,$F8,$F0,$F8,$F8,$F8,$FC,$FC,$FE,$FE,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$80,$C0,$E0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$04,$03
+  db $03,$03,$01,$03,$01,$03,$03,$01,$01,$01,$00,$01,$00,$00,$00,$00
+  db $FE,$FC,$FC,$FE,$FE,$FE,$FF,$FE,$FF,$FF,$FF,$FF,$FF,$FF,$7F,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$80,$80,$C0,$F0,$E0
+  db $FF,$FF,$FF,$7F,$7F,$3F,$3F,$1F,$1F,$0F,$03,$07,$00,$01,$00,$00
+  db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$4F,$3F
+  db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FE,$FF,$E0,$F8
+  db $FF,$FF,$FE,$FF,$FC,$FE,$FC,$F8,$E0,$F0,$A0,$C0,$00,$00,$00,$00
+  db $00,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $1F,$1F,$1F,$1F,$1F,$1F,$3F,$1F,$1F,$1F,$1F,$1F,$0F,$1F,$0F,$0F
+  db $E0,$E0,$E5,$E3,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $7F,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FE,$FA,$FC,$F8,$F0
+  db $E0,$F0,$E0,$E0,$E0,$C0,$80,$C0,$00,$80,$00,$00,$00,$00,$00,$00
+  db $FF,$FF,$7F,$FF,$3F,$7F,$1F,$3F,$1F,$0F,$03,$07,$00,$01,$00,$00
+  db $F2,$FC,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$5F,$3F
+  db $9F,$7F,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FE,$FF
+  db $C0,$E0,$F0,$E0,$E0,$F0,$F0,$F0,$F0,$F0,$E0,$F0,$C0,$E0,$80,$00
+  db $7F,$7F,$7F,$3F,$1F,$3F,$0F,$1F,$07,$0F,$07,$03,$00,$01,$00,$00
+  db $F0,$F8,$FE,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$BF,$7F
+  db $00,$00,$80,$00,$E0,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$06,$00,$7F,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$80,$C0,$E0,$C0,$C0,$E0,$C0,$E0,$C0,$E0,$80,$C0
+  db $FF,$FF,$39,$FE,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $A0,$C0,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $10,$E0,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $2F,$1F,$04,$03,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FF,$FF,$FF,$FF,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FF,$FF,$E4,$F8,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+GBCCLogoEnd:
+
+
+SECTION "GBCC Logo Map", ROM0
+
+GBCCLogoMap:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$81,$82,$83,$00,$84,$85,$86,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$87,$88,$89,$8A,$00,$8B,$8C,$8D,$8E,$00,$8F,$90,$91,$92,$93,$94,$95,$96,$97,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $98,$99,$9A,$00,$9B,$00,$9C,$9D,$9E,$9F,$A0,$A1,$A2,$A3,$A4,$A5,$A6,$A7,$A8,$A9,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $AA,$AB,$00,$AC,$AD,$AE,$AF,$B0,$B1,$83,$B2,$B3,$00,$00,$B4,$B5,$B6,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $B7,$B8,$00,$B9,$BA,$BB,$BC,$BD,$BE,$BF,$C0,$C1,$00,$00,$C2,$C3,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $C4,$C5,$C6,$C7,$C8,$C9,$BC,$CA,$CB,$CC,$CD,$CE,$CF,$D0,$D1,$D2,$D3,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$D4,$D5,$D6,$D7,$D8,$D9,$DA,$DB,$DC,$D8,$DD,$DE,$DF,$E0,$E1,$E2,$E3,$E4,$E5,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$CF,$E6,$E7,$00,$00,$00,$D0,$E8,$00,$00,$E9,$EA,$EB,$83,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+GBCCLogoMapEnd:
+
+
+SECTION "GBCC Logo Attributes", ROM0
+
+GBCCLogoAttributes:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $01,$01,$01,$01,$01,$01,$02,$02,$02,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $01,$01,$01,$01,$01,$01,$02,$02,$02,$02,$01,$03,$03,$03,$03,$04,$04,$04,$04,$04,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $01,$01,$01,$01,$01,$01,$02,$02,$02,$02,$03,$03,$03,$03,$03,$04,$04,$04,$04,$04,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $01,$01,$01,$01,$01,$01,$02,$02,$02,$02,$03,$03,$01,$01,$04,$04,$04,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $01,$01,$01,$01,$01,$01,$02,$02,$02,$02,$03,$03,$01,$01,$04,$04,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $01,$01,$01,$01,$01,$01,$02,$02,$02,$02,$03,$03,$03,$03,$04,$04,$04,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $01,$01,$01,$01,$01,$01,$02,$02,$02,$02,$23,$03,$03,$03,$03,$04,$04,$04,$04,$04,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $01,$01,$01,$01,$01,$01,$62,$02,$02,$01,$01,$01,$43,$03,$01,$01,$04,$04,$04,$44,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+GBCCLogoAttributesEnd:
+
+
+SECTION "Button Screen Tiles", ROM0, ALIGN[4]
+
+ButtonScreenTileData:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$7C,$00,$10,$00,$10,$00,$10,$00,$10,$00,$10,$00,$00
+  db $00,$00,$00,$00,$00,$5C,$00,$60,$00,$40,$00,$40,$00,$40,$00,$00
+  db $00,$00,$00,$00,$00,$44,$00,$44,$00,$44,$00,$3C,$00,$04,$00,$78
+  db $00,$00,$00,$00,$00,$78,$00,$44,$00,$44,$00,$78,$00,$40,$00,$40
+  db $00,$00,$00,$00,$00,$38,$00,$44,$00,$7C,$00,$40,$00,$3C,$00,$00
+  db $00,$00,$00,$00,$00,$3C,$00,$40,$00,$38,$00,$04,$00,$78,$00,$00
+  db $00,$10,$00,$00,$00,$30,$00,$10,$00,$10,$00,$10,$00,$10,$00,$00
+  db $00,$00,$00,$00,$00,$78,$00,$44,$00,$44,$00,$44,$00,$44,$00,$00
+  db $00,$00,$00,$00,$00,$3C,$00,$44,$00,$44,$00,$3C,$00,$04,$00,$78
+  db $00,$00,$00,$00,$00,$3C,$00,$44,$00,$44,$00,$4C,$00,$34,$00,$00
+  db $00,$00,$00,$00,$00,$3C,$00,$40,$00,$40,$00,$40,$00,$3C,$00,$00
+  db $00,$40,$00,$40,$00,$78,$00,$44,$00,$44,$00,$44,$00,$44,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$38,$00,$44,$00,$44,$00,$44
+  db $00,$00,$00,$00,$00,$1C,$00,$20,$00,$20,$00,$3C,$00,$20,$00,$20
+  db $00,$00,$00,$00,$00,$00,$00,$20,$00,$78,$00,$20,$00,$20,$00,$20
+  db $00,$00,$00,$00,$00,$40,$00,$40,$00,$78,$00,$44,$00,$44,$00,$44
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$38,$00,$44,$00,$7C,$00,$40
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$44,$00,$44,$00,$44,$00,$44
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$78,$00,$44,$00,$44,$00,$44
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$3C,$00,$40,$00,$38,$00,$04
+  db $00,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$3C,$00,$40
+  db $00,$20,$00,$00,$00,$00,$00,$00,$00,$40,$00,$40,$00,$78,$00,$44
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$38,$00,$44
+  db $00,$18,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$44,$00,$44
+  db $00,$44,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$78,$00,$44
+  db $00,$3C,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$40,$00,$40,$00,$78,$00,$44
+  db $00,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$38,$00,$44
+  db $00,$3C,$00,$00,$00,$00,$00,$00,$00,$30,$00,$10,$00,$10,$00,$10
+  db $00,$18,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$38,$00,$44
+  db $00,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$44,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$78,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$38,$00,$04,$00,$78,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$44,$00,$44,$00,$44,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$44,$00,$44,$00,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$44,$00,$7C,$00,$44,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$7C,$00,$40,$00,$3C,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$10,$00,$10,$00,$10,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$40,$00,$40,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$3F,$1F,$60,$3F,$C0,$7F,$80,$7F,$80,$7F,$80,$7F,$80,$7F,$80
+  db $7F,$80,$7F,$80,$7F,$80,$7F,$80,$7F,$80,$7F,$80,$7F,$80,$7F,$80
+  db $00,$00,$00,$00,$00,$00,$00,$01,$00,$07,$03,$0C,$07,$08,$07,$18
+  db $00,$00,$00,$00,$00,$7E,$3C,$C3,$FF,$00,$FF,$00,$FF,$00,$FF,$00
+  db $00,$FF,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00
+  db $7F,$80,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00
+  db $0F,$10,$0F,$30,$1F,$20,$1F,$20,$1F,$20,$1F,$20,$0F,$30,$0F,$10
+  db $FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00
+  db $00,$00,$00,$38,$00,$44,$00,$44,$00,$7C,$00,$44,$00,$44,$00,$00
+  db $00,$00,$00,$78,$00,$44,$00,$78,$00,$44,$00,$44,$00,$78,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$07,$00,$04,$00,$04,$00,$04,$00,$04
+  db $00,$00,$00,$00,$00,$00,$00,$9E,$00,$51,$00,$51,$00,$5E,$00,$50
+  db $00,$00,$00,$00,$00,$00,$00,$39,$00,$45,$00,$45,$00,$7D,$00,$45
+  db $00,$00,$00,$00,$00,$00,$00,$E0,$00,$10,$00,$10,$00,$10,$00,$10
+  db $00,$07,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$90,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$45,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FA
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$0F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$9E
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$F8
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$EF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$9C
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$F3
+  db $00,$20,$00,$1C,$00,$02,$00,$02,$00,$3C,$00,$00,$00,$00,$00,$00
+  db $00,$82,$00,$F2,$00,$82,$00,$82,$00,$FB,$00,$00,$00,$00,$00,$00
+  db $00,$08,$00,$0F,$00,$08,$00,$08,$00,$EF,$00,$00,$00,$00,$00,$00
+  db $00,$20,$00,$20,$00,$20,$00,$20,$00,$9E,$00,$00,$00,$00,$00,$00
+  db $00,$20,$00,$20,$00,$20,$00,$20,$00,$20,$00,$00,$00,$00,$00,$00
+  db $00,$02,$00,$01,$00,$00,$00,$00,$00,$03,$00,$00,$00,$00,$00,$00
+  db $00,$02,$00,$C2,$00,$22,$00,$22,$00,$C2,$00,$00,$00,$00,$00,$00
+  db $00,$22,$00,$22,$00,$3E,$00,$22,$00,$22,$00,$00,$00,$00,$00,$00
+  db $00,$88,$00,$88,$00,$F0,$00,$88,$00,$88,$00,$00,$00,$00,$00,$00
+  db $00,$80,$00,$80,$00,$80,$00,$80,$00,$80,$00,$00,$00,$00,$00,$00
+  db $00,$1F,$0F,$30,$1F,$60,$3F,$40,$3F,$40,$1F,$60,$0F,$30,$00,$1F
+  db $00,$FF,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$00,$FF
+ButtonScreenTileDataEnd:
+
+
+SECTION "Button Screen Map", ROM0, ALIGN[4]
+
+ButtonScreenMap:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$81,$82,$83,$00,$84,$82,$85,$86,$86,$87,$88,$89,$00,$85,$8A,$8B,$8C,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$8D,$8E,$00,$8F,$90,$91,$00,$90,$92,$8F,$8F,$8D,$93,$94,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$95,$96,$97,$98,$99,$9A,$9B,$9C,$9D,$9E,$98,$9F,$A0,$A1,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$A2,$A3,$A4,$A5,$A3,$00,$A4,$A6,$A7,$A4,$A5,$A8,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$A9,$A9,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$AA,$AA,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$AB,$AC,$AB,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$A9,$AD,$AE,$AE,$AD,$A9,$00,$00,$00,$00,$00,$AB,$AC,$AB,$00,$AF,$B0,$AF,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$A9,$AD,$AE,$AE,$AD,$A9,$00,$00,$00,$00,$00,$AF,$B0,$AF,$00,$AB,$AC,$AB,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$AA,$AA,$00,$00,$00,$00,$00,$00,$00,$AB,$AC,$AB,$00,$00,$B1,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$A9,$A9,$00,$00,$00,$00,$00,$00,$00,$00,$B2,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$B3,$B4,$B5,$B6,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$B7,$B8,$B9,$B7,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$A1,$BA,$BB,$BC,$BD,$BE,$BF,$C0,$C1,$B7,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$C2,$C3,$C4,$C5,$C6,$C7,$C8,$C9,$CA,$CB,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$CC,$CD,$CC,$00,$00,$CC,$CD,$CC,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+ButtonScreenMapEnd:
+
+
+SECTION "Button Screen Attributes", ROM0, ALIGN[4]
+
+ButtonScreenAttributes:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$20,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$20,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$20,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$20,$00,$20,$00,$00,$00,$00,$00,$00,$00,$20,$00,$00,$00,$20,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$40,$40,$40,$60,$40,$60,$00,$00,$00,$00,$00,$00,$00,$20,$00,$40,$40,$60,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$20,$00,$00,$00,$00,$00,$00,$00,$40,$40,$60,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$40,$60,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$20,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$60,$00,$00,$00,$00,$00,$00,$00,$00,$60,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$20,$00,$00,$00,$00,$20,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+ButtonScreenAttributesEnd:
+
+
+SECTION "Yeah Tiles", ROM0, ALIGN[4]
+
+YeahTileData:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$7C,$FE,$7F,$7E,$7F,$3F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$01,$01
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$7C,$FE,$FC,$FC,$FC,$F8
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$3F,$3F,$3F,$3F,$3F,$3F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$80,$80,$80,$80,$80,$80
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$7F,$7F,$FF,$7F,$7F,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$80,$00,$00,$80
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$3E,$3E,$3E,$3E,$3E,$3E
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$F8,$F8,$F8,$F8,$F8,$F8
+  db $1F,$3F,$1F,$1F,$1F,$0F,$07,$0F,$07,$07,$07,$03,$01,$03,$01,$01
+  db $00,$80,$C0,$80,$C0,$C0,$C0,$E0,$F0,$E0,$F0,$F0,$F0,$F8,$FC,$F8
+  db $01,$03,$07,$03,$07,$07,$07,$0F,$1F,$0F,$1F,$1F,$1F,$3F,$7F,$3F
+  db $F0,$F8,$F0,$F0,$F0,$E0,$C0,$E0,$C0,$C0,$C0,$80,$00,$80,$00,$00
+  db $3F,$3F,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E
+  db $FF,$FF,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $80,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$01,$00,$00,$01,$03,$01,$01,$03,$03,$03,$07,$03,$03,$07
+  db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$F7,$FF,$E3,$F7,$F7,$E3,$E3,$E3
+  db $80,$80,$C0,$80,$80,$C0,$E0,$C0,$C0,$E0,$E0,$E0,$F0,$E0,$E0,$F0
+  db $3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E
+  db $F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8
+  db $01,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FC,$FC,$7C,$FE,$7E,$7F,$7F,$3F,$1F,$3F,$1F,$1F,$1F,$0F,$07,$0F
+  db $7F,$7E,$7C,$FE,$FC,$FC,$FC,$F8,$F0,$F8,$F0,$F0,$F0,$E0,$C0,$E0
+  db $3E,$3E,$3E,$3E,$3E,$3E,$3F,$3F,$3F,$3F,$3F,$3F,$3F,$3F,$3E,$3E
+  db $00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$00
+  db $07,$07,$0F,$07,$07,$0F,$1F,$0F,$0F,$1F,$1F,$1F,$3F,$1F,$1F,$3F
+  db $C1,$E3,$E3,$C1,$C1,$C1,$80,$C1,$C1,$80,$00,$80,$80,$00,$00,$00
+  db $F0,$F0,$F8,$F0,$F0,$F8,$FC,$F8,$F8,$FC,$7C,$FC,$FE,$7C,$7C,$7E
+  db $07,$07,$07,$07,$07,$07,$07,$07,$07,$07,$07,$07,$07,$07,$07,$07
+  db $C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0
+  db $3E,$3F,$7F,$3E,$3C,$7E,$FF,$7F,$7F,$FF,$FF,$FF,$FF,$FF,$F8,$F8
+  db $3E,$7E,$7F,$3E,$1E,$3F,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$0F,$0F
+  db $00,$00,$00,$00,$00,$00,$80,$00,$00,$80,$80,$80,$C0,$80,$80,$C0
+  db $F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$00,$00,$00,$00
+  db $3E,$3E,$3E,$3E,$3E,$3E,$3E,$3E,$3F,$3F,$3F,$3F,$3F,$3F,$3F,$3F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $01,$01,$03,$01,$01,$03,$07,$03,$83,$87,$87,$87,$8F,$87,$87,$8F
+  db $F0,$F8,$F8,$F0,$F0,$F0,$E0,$F0,$F0,$E0,$E0,$E0,$C0,$E0,$E0,$C0
+  db $07,$0F,$0F,$07,$07,$07,$03,$07,$07,$03,$03,$03,$01,$03,$03,$01
+  db $C0,$C0,$E0,$C0,$C0,$E0,$F0,$E0,$E0,$F0,$F0,$F0,$F8,$F0,$F0,$F8
+YeahTileDataEnd:
+
+
+SECTION "Yeah Map", ROM0, ALIGN[4]
+
+YeahMap:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$01,$00,$02,$03,$04,$05,$05,$06,$00,$07,$08,$00,$09,$00,$00,$09,$00,$0A,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$0B,$0C,$0D,$0E,$0F,$10,$10,$11,$12,$13,$14,$00,$15,$00,$00,$15,$00,$16,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$17,$18,$19,$00,$1A,$1B,$1B,$00,$1C,$1D,$1E,$00,$1A,$1B,$1B,$1A,$00,$16,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$1F,$20,$00,$15,$00,$00,$08,$21,$1B,$22,$23,$15,$00,$00,$15,$00,$24,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$1F,$20,$00,$25,$26,$26,$27,$28,$00,$29,$2A,$15,$00,$00,$15,$00,$24,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+YeahMapEnd:
+
+
+SECTION "YeahAttributes", ROM0, ALIGN[4]
+
+YeahAttributes:
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$4B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+YeahAttributesEnd:
+
+SECTION "IngameMenuMap", ROM0, ALIGN[4]
+
+IngameMenuMap:
+  db "                                "
+  db " GBCC features an               "
+  db " ingame menu, where             "
+  db " various settings               "
+  db " can be changed.                "
+  db "                                "
+  db "                                "
+  db " The controls are               "
+  db " just the usual                 "
+  db " Game Boy controls.             "
+  db "                                "
+  db "                                "
+  db " Try opening it now,            "
+  db " by tapping on the              "
+  db " screen, and change             "
+  db " some settings.                 "
+  db "                                "
+  db "                                "
+IngameMenuMapEnd:
+
+SECTION "Cool Tiles", ROM0, ALIGN[4]
+
+CoolTileData:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$05,$03,$0F,$07
+  db $00,$00,$00,$00,$00,$00,$00,$00,$5F,$3F,$7F,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$80,$00,$80,$C0,$C0,$E0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$03,$01
+  db $00,$00,$00,$00,$00,$00,$00,$00,$17,$0F,$7F,$3F,$7F,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$FA,$FC,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$01,$01,$01,$01,$01
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$F0,$F0,$F0,$F0,$F0,$F0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00
+  db $1F,$0F,$3F,$1F,$7F,$3F,$3E,$7F,$FC,$7E,$78,$FC,$FC,$F8,$F0,$F8
+  db $E8,$F0,$A0,$C0,$00,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $17,$0F,$05,$03,$01,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $E0,$E0,$E0,$E0,$60,$E0,$20,$60,$00,$20,$00,$00,$00,$00,$00,$00
+  db $07,$03,$0F,$07,$1F,$0F,$0F,$1F,$3F,$1F,$1E,$3F,$3F,$3E,$7D,$3E
+  db $FA,$FC,$E8,$F0,$E0,$C0,$C0,$80,$80,$00,$80,$00,$00,$00,$00,$00
+  db $F8,$F0,$FC,$F8,$FE,$FC,$FC,$7E,$7F,$3E,$5E,$3F,$3F,$1F,$2F,$1F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$81,$00
+  db $01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0
+  db $00,$01,$00,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $F8,$F0,$F8,$F0,$E0,$F0,$E0,$F0,$F0,$E0,$F0,$E0,$E0,$E0,$E0,$E0
+  db $3E,$7C,$3E,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C
+  db $1F,$0F,$1F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F
+  db $00,$81,$00,$81,$81,$81,$81,$81,$81,$81,$81,$81,$81,$81,$81,$81
+  db $01,$01,$01,$01,$01,$01,$01,$01,$00,$01,$00,$01,$01,$00,$00,$00
+  db $F0,$E0,$F0,$E0,$E0,$F0,$E0,$F0,$F8,$F0,$F8,$F0,$F0,$F8,$FC,$F8
+  db $7C,$7C,$7C,$7C,$7C,$7C,$3E,$7C,$3E,$7C,$7D,$3E,$3F,$3E,$1E,$3F
+  db $0F,$0F,$0F,$0F,$0F,$0F,$1F,$0F,$1F,$0F,$2F,$1F,$3F,$1F,$5E,$3F
+  db $81,$81,$81,$81,$81,$81,$00,$81,$00,$81,$81,$00,$00,$00,$00,$00
+  db $0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$0F,$00,$00,$00,$00
+  db $80,$80,$80,$80,$80,$80,$80,$80,$80,$80,$80,$80,$00,$00,$00,$00
+  db $78,$FC,$FC,$7E,$3E,$7F,$7F,$3F,$3F,$1F,$1F,$0F,$0F,$07,$05,$03
+  db $00,$00,$00,$00,$00,$00,$00,$80,$A0,$C0,$E8,$F0,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$01,$00,$05,$03,$17,$0F,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$20,$20,$60,$60,$E0,$E0,$E0,$E0,$E0,$C0,$E0,$80,$C0
+  db $3F,$1F,$0F,$1F,$1F,$0F,$0F,$07,$07,$03,$03,$01,$01,$00,$00,$00
+  db $80,$00,$C0,$80,$E0,$C0,$E8,$F0,$FA,$FC,$FF,$FF,$7F,$FF,$7F,$3F
+  db $00,$00,$00,$00,$01,$00,$05,$03,$17,$0F,$FF,$FF,$FF,$FF,$FF,$FF
+  db $7F,$3E,$FC,$7E,$FE,$FC,$FC,$F8,$F8,$F0,$F0,$E0,$A0,$C0,$80,$00
+  db $F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8
+  db $7F,$FF,$5F,$3F,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $17,$0F,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FA,$FC,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+CoolTileDataEnd:
+
+
+SECTION "Cool Map", ROM0, ALIGN[4]
+
+CoolMap:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$01,$02,$02,$03,$04,$05,$06,$01,$00,$01,$06,$05,$04,$07,$08,$00,$00,$08,$07,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $09,$0A,$0B,$0C,$0D,$0E,$0F,$0C,$10,$11,$10,$0C,$0F,$0E,$12,$13,$00,$00,$13,$12,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $14,$15,$00,$00,$00,$16,$00,$00,$17,$18,$17,$00,$00,$16,$12,$13,$00,$00,$13,$12,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $19,$1A,$00,$00,$00,$1B,$09,$00,$1C,$1D,$1C,$00,$09,$1B,$12,$13,$00,$00,$1E,$1F,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$20,$21,$22,$23,$24,$25,$26,$27,$00,$27,$26,$25,$24,$12,$28,$29,$2A,$1E,$1F,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$09,$2B,$2B,$09,$00,$2C,$2D,$00,$00,$00,$2D,$2C,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+CoolMapEnd:
+
+
+SECTION "CoolAttributes", ROM0, ALIGN[4]
+
+CoolAttributes:
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$2B,$2B,$2B,$0B,$0B,$0B,$0B,$2B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$2B,$2B,$2B,$0B,$0B,$0B,$0B,$2B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$2B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$2B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$2B,$2B,$2B,$0B,$0B,$0B,$0B,$4B,$4B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$4B,$0B,$2B,$6B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+CoolAttributesEnd:
+
+
+SECTION "BlankScreen", ROM0, ALIGN[4]
+
+BlankScreen:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+BlankScreenEnd:
+
+
+SECTION "RearrangeLayoutMap", ROM0, ALIGN[4]
+
+RearrangeLayoutMap:
+  db "                                "
+  db " You can also                   "
+  db " change the size                "
+  db " and position of                "
+  db " the buttons from               "
+  db " the main settings              "
+  db " screen.                        "
+  db "                                "
+  db " Try going there                "
+  db " and playing around             "
+  db " now.                           "
+  db "                                "
+  db " (Make sure you                 "
+  db " don't disable                  "
+  db " autoresume if you              "
+  db " want to continue               "
+  db " this tutorial!)                "
+  db "                                "
+RearrangeLayoutMapEnd:
+
+
+SECTION "Rad Tiles", ROM0, ALIGN[4]
+
+RadTileData:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FE,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$40,$80,$D0,$E0,$F8,$F0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$00,$01
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FE,$FE,$FF,$FE,$FE,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$40,$80,$F0,$E0,$F4,$F8
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$F8,$F8,$F8,$F8,$F8,$F8
+  db $FF,$FF,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8
+  db $FF,$FF,$06,$01,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FC,$F8,$F8,$FC,$7E,$FC,$3C,$7E,$7E,$3E,$7E,$3E,$3E,$3E,$3E,$3E
+  db $01,$01,$03,$01,$01,$03,$07,$03,$03,$07,$07,$07,$0F,$07,$07,$0F
+  db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$EF,$FF,$C7,$EF,$EF,$C7,$C7,$C7
+  db $00,$00,$80,$00,$00,$80,$C0,$80,$80,$C0,$C0,$C0,$E0,$C0,$C0,$E0
+  db $FF,$FF,$02,$01,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FE,$FC,$FF,$FE,$BF,$7F,$3F,$1F,$1F,$0F,$0F,$07,$0B,$07,$07,$03
+  db $00,$00,$00,$00,$80,$00,$C0,$80,$80,$C0,$E0,$C0,$C0,$E0,$E0,$E0
+  db $F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8
+  db $F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$06,$01,$FF,$FF,$FF,$FF,$FF,$FF
+  db $7E,$3E,$7E,$3E,$3C,$7E,$7E,$FC,$FC,$F8,$F8,$F0,$D0,$E0,$A0,$C0
+  db $0F,$0F,$1F,$0F,$0F,$1F,$3F,$1F,$1F,$3F,$3E,$3F,$7F,$3E,$3E,$7E
+  db $83,$C7,$C7,$83,$83,$83,$01,$83,$83,$01,$00,$01,$01,$00,$00,$00
+  db $E0,$E0,$F0,$E0,$E0,$F0,$F8,$F0,$F0,$F8,$F8,$F8,$FC,$F8,$F8,$FC
+  db $05,$03,$03,$01,$03,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $F0,$E0,$E0,$F0,$E0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0
+  db $FF,$FF,$05,$03,$01,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $F0,$E0,$F8,$F0,$F4,$F8,$F8,$7C,$3E,$7C,$7C,$3E,$1F,$3E,$3E,$1F
+  db $00,$00,$00,$00,$00,$00,$01,$00,$00,$01,$01,$01,$03,$01,$01,$03
+  db $7C,$7E,$FE,$7C,$78,$FC,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$F0,$F0
+  db $00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$00
+  db $7C,$FC,$FE,$7C,$3C,$7E,$FF,$FE,$FE,$FF,$FF,$FF,$FF,$FF,$1F,$1F
+  db $01,$01,$01,$01,$03,$01,$03,$01,$05,$03,$07,$03,$0B,$07,$0F,$07
+  db $F0,$F0,$F0,$F0,$E0,$F0,$E0,$F0,$F0,$E0,$E0,$E0,$C0,$E0,$E0,$C0
+  db $F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$00,$00,$00,$00
+  db $0F,$1F,$1F,$0F,$07,$0F,$0F,$07,$03,$07,$07,$03,$01,$03,$03,$01
+  db $83,$03,$07,$83,$C3,$87,$8F,$C7,$E7,$CF,$DF,$EF,$EF,$FF,$FF,$FF
+  db $E0,$F0,$F0,$E0,$E0,$E0,$C0,$E0,$E0,$C0,$C0,$C0,$80,$C0,$C0,$80
+  db $0F,$1F,$1F,$0F,$0F,$0F,$07,$0F,$0F,$07,$07,$07,$03,$07,$07,$03
+  db $F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$02,$01,$FF,$FF,$FF,$FF,$FF,$FF,$FE,$FF
+  db $1F,$0F,$3F,$1F,$BF,$7F,$FF,$FE,$FE,$FC,$F4,$F8,$F0,$E0,$40,$80
+  db $80,$C0,$C0,$80,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+RadTileDataEnd:
+
+
+SECTION "Rad Map", ROM0, ALIGN[4]
+
+RadMap:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$01,$02,$03,$00,$04,$05,$00,$00,$01,$02,$06,$00,$00,$07,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$08,$09,$0A,$00,$0B,$0C,$0D,$00,$08,$0E,$0F,$10,$00,$11,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$12,$13,$14,$00,$15,$16,$17,$00,$11,$00,$18,$19,$00,$11,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$08,$1A,$1B,$1C,$1D,$1E,$1F,$04,$11,$00,$20,$21,$00,$22,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$11,$00,$23,$24,$25,$00,$26,$0B,$27,$28,$29,$2A,$00,$22,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+RadMapEnd:
+
+
+SECTION "Rad Attributes", ROM0, ALIGN[4]
+
+RadAttributes:
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$4B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+RadAttributesEnd:
+
+
+SECTION "Turbo Button Map", ROM0, ALIGN[4]
+
+TurboButtonMap:
+  db "                                "
+  db " Turbo mode can be              "
+  db " toggled with the               "
+  db " switch just below              "
+  db " the screen. This               "
+  db " can be disabled in             "
+  db " the app settings.              "
+  db "                                "
+  db " To finish this                 "
+  db " tutorial, toggle               "
+  db " turbo on for a                 "
+  db " second or so,                  "
+  db " then turn it off.              "
+  db "                                "
+  db "                                "
+  db "                                "
+  db "                                "
+  db "                                "
+TurboButtonMapEnd:
+
+
+SECTION "Turbo Button Tiles", ROM0, ALIGN[4]
+
+TurboButtonTileData:
+  db $0F,$0F,$1F,$1F,$3F,$3F,$27,$27,$21,$21,$24,$24,$24,$24,$18,$18
+  db $F0,$F0,$F8,$F8,$FC,$FC,$FC,$FC,$84,$84,$24,$24,$24,$24,$18,$18
+  db $07,$07,$08,$08,$18,$18,$28,$28,$1F,$1F,$08,$08,$09,$09,$0E,$0E
+  db $00,$00,$0F,$0F,$1F,$1F,$3F,$3F,$27,$27,$21,$21,$24,$24,$24,$24
+  db $00,$00,$F0,$F0,$F8,$F8,$FC,$FC,$FC,$FC,$84,$84,$24,$24,$24,$24
+  db $10,$10,$0F,$0F,$18,$18,$28,$28,$1F,$1F,$09,$09,$0E,$0E,$00,$00
+  db $08,$08,$F8,$F8,$14,$14,$18,$18,$F0,$F0,$10,$10,$90,$90,$70,$70
+TurboButtonTileDataEnd:
+
+
+SECTION "Nice Tiles", ROM0, ALIGN[4]
+
+NiceTileData:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$3F,$3F,$3F,$3F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$80,$C0,$E0,$C0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$7C,$7C,$7C,$7C
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$01,$01,$01
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$F0,$F0,$F0,$F0
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$05,$03,$17,$0F
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF
+  db $3F,$3F,$3F,$3F,$3F,$3F,$3F,$3F,$3E,$3F,$3F,$3E,$3E,$3E,$3E,$3E
+  db $C0,$E0,$F0,$E0,$E0,$F0,$F8,$F0,$F0,$F8,$7C,$F8,$F8,$7C,$3E,$7C
+  db $7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C,$7C
+  db $01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0
+  db $00,$00,$00,$00,$01,$00,$03,$01,$07,$03,$03,$07,$0F,$07,$07,$0F
+  db $5F,$3F,$FF,$7F,$FE,$FF,$FA,$FC,$F0,$F8,$E0,$F0,$C0,$E0,$80,$C0
+  db $FF,$FF,$FF,$FF,$81,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $F8,$FC,$FC,$FE,$7E,$FE,$5E,$3E,$16,$0E,$02,$06,$00,$02,$00,$00
+  db $FF,$FF,$FF,$FF,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0
+  db $7C,$3E,$1F,$3E,$3E,$1F,$0F,$1F,$17,$0F,$0F,$07,$03,$07,$07,$03
+  db $00,$00,$00,$00,$00,$00,$80,$00,$00,$80,$C0,$80,$80,$C0,$E0,$C0
+  db $0F,$0F,$1F,$0F,$0F,$1F,$0F,$1F,$1E,$1F,$1E,$1F,$1F,$1E,$1F,$1E
+  db $C0,$80,$00,$80,$80,$00,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8
+  db $01,$03,$03,$01,$00,$01,$01,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $C0,$E0,$F0,$E0,$E0,$F0,$F8,$F0,$70,$F8,$FC,$78,$3A,$7C,$7C,$3E
+  db $01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$00,$00
+  db $F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$00,$00
+  db $1F,$3E,$3E,$1F,$0F,$1F,$17,$0F,$0F,$07,$03,$07,$07,$03,$01,$03
+  db $7C,$7C,$FC,$7C,$7C,$FC,$FC,$FC,$FC,$FC,$FC,$FC,$FC,$FC,$FC,$FC
+  db $F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$FC,$FC,$FC,$FC,$FC,$FC
+  db $00,$00,$00,$00,$00,$00,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
+  db $00,$00,$00,$00,$00,$00,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0,$F0
+  db $3E,$3E,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $03,$01,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FC,$FC,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $01,$01,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $F0,$F0,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $FF,$FF,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+NiceTileDataEnd:
+
+
+SECTION "Nice Map", ROM0, ALIGN[4]
+
+NiceMap:
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$01,$02,$00,$03,$04,$05,$00,$06,$07,$06,$04,$07,$07,$01,$04,$05,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$08,$09,$00,$0A,$0B,$0C,$0D,$0E,$0F,$10,$0B,$11,$07,$01,$0B,$0C,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$0A,$12,$13,$0A,$0B,$0C,$14,$15,$00,$00,$0B,$16,$17,$18,$0B,$0C,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$0A,$19,$1A,$0A,$0B,$0C,$14,$15,$00,$00,$0B,$0C,$00,$00,$1B,$1C,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$0A,$00,$1D,$1E,$0B,$0C,$0D,$0E,$0F,$10,$0B,$1F,$20,$21,$22,$23,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$24,$00,$25,$26,$27,$28,$00,$06,$07,$06,$27,$29,$29,$26,$27,$28,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+  db $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+NiceMapEnd:
+
+
+SECTION "Nice Attributes", ROM0, ALIGN[4]
+
+NiceAttributes:
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$4B,$6B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$4B,$4B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$2B,$0B,$0B,$0B,$0B,$0B,$4B,$4B,$4B,$4B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$4B,$4B,$6B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+  db $0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B,$0B
+NiceAttributesEnd:
+
+
+SECTION "Final Screen Map", ROM0, ALIGN[4]
+
+FinalScreenMap:
+  db "                                "
+  db "                                "
+  db "                                "
+  db "                                "
+  db "                                "
+  db "  That's all folks!             "
+  db "                                "
+  db "                                "
+  db "    Go play some                "
+  db "       games                    "
+  db "                                "
+  db "                                "
+  db "        or                      "
+  db "                                "
+  db "                                "
+  db "   Press start to               "
+  db "       reset                    "
+  db "                                "
+FinalScreenMapEnd:

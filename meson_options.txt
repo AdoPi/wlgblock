@@ -1,0 +1,2 @@
+option('man-pages', type: 'feature', value: 'auto', description: 'Install man pages.')
+option('gtk', type: 'feature', value: 'auto', description: 'Build & install the GTK GUI')

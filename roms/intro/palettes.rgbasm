@@ -1,0 +1,126 @@
+
+SECTION "GBCC Logo Palettes", ROM0
+
+; Colour constants are defined in range 0-255
+
+COLOUR_BEGIN EQU 72.0 ; Colour of each channel to start animation at
+
+R_BERRY_END_1 EQU 144.0 ; Red value of Berry palette, colour 1
+G_BERRY_END_1 EQU 48.0 ; Green value of Berry palette, colour 1
+B_BERRY_END_1 EQU 80.0 ; Blue value of Berry palette, colour 1
+
+R_BERRY_END_2 EQU 200.0 ; Red value of Berry palette, colour 2
+G_BERRY_END_2 EQU 32.0 ; Green value of Berry palette, colour 2
+B_BERRY_END_2 EQU 104.0 ; Blue value of Berry palette, colour 2
+
+R_BERRY_END_3 EQU 248.0 ; Red value of Berry palette, colour 3
+G_BERRY_END_3 EQU 8.0 ; Green value of Berry palette, colour 3
+B_BERRY_END_3 EQU 128.0 ; Blue value of Berry palette, colour 3
+
+
+R_GRAPE_END_1 EQU 88.0 ; Red value of Grape palette, colour 1
+G_GRAPE_END_1 EQU 56.0 ; Green value of Grape palette, colour 1
+B_GRAPE_END_1 EQU 104.0 ; Blue value of Grape palette, colour 1
+
+R_GRAPE_END_2 EQU 128.0 ; Red value of Grape palette, colour 2
+G_GRAPE_END_2 EQU 64.0 ; Green value of Grape palette, colour 2
+B_GRAPE_END_2 EQU 160.0 ; Blue value of Grape palette, colour 2
+
+R_GRAPE_END_3 EQU 168.0 ; Red value of Grape palette, colour 3
+G_GRAPE_END_3 EQU 72.0 ; Green value of Grape palette, colour 3
+B_GRAPE_END_3 EQU 216.0 ; Blue value of Grape palette, colour 3
+
+
+R_KIWI_END_1 EQU 96.0 ; Red value of Kiwi palette, colour 1
+G_KIWI_END_1 EQU 128.0 ; Green value of Kiwi palette, colour 1
+B_KIWI_END_1 EQU 56.0 ; Blue value of Kiwi palette, colour 1
+
+R_KIWI_END_2 EQU 128.0 ; Red value of Kiwi palette, colour 2
+G_KIWI_END_2 EQU 176.0 ; Green value of Kiwi palette, colour 2
+B_KIWI_END_2 EQU 48.0 ; Blue value of Kiwi palette, colour 2
+
+R_KIWI_END_3 EQU 128.0 ; Red value of Kiwi palette, colour 3
+G_KIWI_END_3 EQU 216.0 ; Green value of Kiwi palette, colour 3
+B_KIWI_END_3 EQU 48.0 ; Blue value of Kiwi palette, colour 3
+
+
+R_TEAL_END_1 EQU 48.0 ; Red value of Teal palette, colour 1
+G_TEAL_END_1 EQU 112.0 ; Green value of Teal palette, colour 1
+B_TEAL_END_1 EQU 112.0 ; Blue value of Teal palette, colour 1
+
+R_TEAL_END_2 EQU 40.0 ; Red value of Teal palette, colour 2
+G_TEAL_END_2 EQU 144.0 ; Green value of Teal palette, colour 2
+B_TEAL_END_2 EQU 152.0 ; Blue value of Teal palette, colour 2
+
+R_TEAL_END_3 EQU 0.0 ; Red value of Teal palette, colour 3
+G_TEAL_END_3 EQU 200.0 ; Green value of Teal palette, colour 3
+B_TEAL_END_3 EQU 200.0 ; Blue value of Teal palette, colour 3
+
+
+N_PALETTES EQU 8
+
+LogoPalettes::
+T SET 0.0
+
+REPT N_PALETTES
+  db $29, $25
+; >> 19 reasoning: 16 for conversion to integer, 3 for [0-255] -> [0-32]
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_BERRY_END_1, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_BERRY_END_1, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_BERRY_END_1, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_BERRY_END_2, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_BERRY_END_2, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_BERRY_END_2, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_BERRY_END_3, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_BERRY_END_3, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_BERRY_END_3, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+
+  db $29, $25
+; >> 19 reasoning: 16 for conversion to integer, 3 for [0-255] -> [0-32]
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_GRAPE_END_1, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_GRAPE_END_1, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_GRAPE_END_1, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_GRAPE_END_2, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_GRAPE_END_2, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_GRAPE_END_2, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_GRAPE_END_3, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_GRAPE_END_3, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_GRAPE_END_3, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+
+  db $29, $25
+; >> 19 reasoning: 16 for conversion to integer, 3 for [0-255] -> [0-32]
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_KIWI_END_1, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_KIWI_END_1, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_KIWI_END_1, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_KIWI_END_2, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_KIWI_END_2, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_KIWI_END_2, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_KIWI_END_3, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_KIWI_END_3, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_KIWI_END_3, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+
+  db $29, $25
+; >> 19 reasoning: 16 for conversion to integer, 3 for [0-255] -> [0-32]
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_TEAL_END_1, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_TEAL_END_1, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_TEAL_END_1, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_TEAL_END_2, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_TEAL_END_2, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_TEAL_END_2, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+RED SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(R_TEAL_END_3, T)) >> 19
+GRN SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(G_TEAL_END_3, T)) >> 19
+BLU SET (MUL(COLOUR_BEGIN, 1.0 - T) + MUL(B_TEAL_END_3, T)) >> 19
+  db (RED | ((GRN << 5) & $FF)), ((GRN >> 3) | (BLU << 2))
+T SET T + DIV(1.0, (N_PALETTES - 1) << 16)
+ENDR
