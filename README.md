@@ -3,6 +3,16 @@
 This project replaces the usual password screen with a Gameboy emulator running a patched Pokémon game!
 To unlock your session, you have to solve a little challenge, kind of like a mini escape room built into your OS.
 
+
+<a href="https://news.ycombinator.com/item?id=44854686">
+  <img
+    style="width: 250px; height: 54px;" width="250" height="54"
+    alt="Featured on Hacker News"
+    src="https://hackernews-badge.vercel.app/api?id=44854686"
+  />
+</a>
+
+
 ## Unlock your session with fun!
 I've been a Linux enthusiast since I was a kid. What always captivated me was the freedom to customize my system exactly the way I wanted. With Wayland, we've reached an incredible level of performance. It's like turning your operating system into a video game! I've always been fascinated by the blend of fun and the serious, technical nature of an OS. That’s what inspired me to create this project.
 
@@ -56,6 +66,9 @@ Lastly, I've hacked the Pokémon Cristal game assembly to put my password logic 
 Once a password has been entered correctly, I put an arbitrary value into a specific RAM address ( one that should not be used at this stage of the game ). 
 My locker listens to this address, waiting for the value to be the exact same one. 
 Once it recognizes the good value from the good RAM address, it knows it's time to unlock the session!
+
+
+
 
 
 ## Thanks
