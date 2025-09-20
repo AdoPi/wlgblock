@@ -3,15 +3,18 @@
 This project replaces the usual password screen with a Gameboy emulator running a patched Pokémon game!
 To unlock your session, you have to solve a little challenge, kind of like a mini escape room built into your OS.
 
-
+<a href="https://www.reddit.com/r/unixporn/comments/1mmhb85/oc_i_play_pokémon_to_unlock_my_wayland_session/">
+<img
+    style="width: 200px; height: 54px;" width="250" height="54"
+    alt="Posted on r/unixporn"
+    src="https://img.shields.io/badge/Reddit-%23FF4500.svg?style=for-the-badge&logo=Reddit&logoColor=white"
+/></a>
 <a href="https://news.ycombinator.com/item?id=44854686">
-  <img
+<img
     style="width: 250px; height: 54px;" width="250" height="54"
     alt="Featured on Hacker News"
     src="https://hackernews-badge.vercel.app/api?id=44854686"
-  />
-</a>
-
+/></a>
 
 ## Unlock your session with fun!
 I've been a Linux enthusiast since I was a kid. What always captivated me was the freedom to customize my system exactly the way I wanted. With Wayland, we've reached an incredible level of performance. It's like turning your operating system into a video game! I've always been fascinated by the blend of fun and the serious, technical nature of an OS. That’s what inspired me to create this project.
