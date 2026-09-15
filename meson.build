@@ -15,6 +15,7 @@ project(
 )
 
 debug = get_option('buildtype').startswith('debug')
+fs = import('fs')
 
 if debug
   add_project_arguments('-DDEBUG', language : 'c')
@@ -186,10 +187,13 @@ install_data(
   install_dir: license_dir
 )
 
-install_data(
-  'completions/gbcc',
-  install_dir: completion_location
-)
+completion_file = 'completions/gbcc'
+if fs.exists(completion_file)
+  install_data(
+    completion_file,
+    install_dir: completion_location
+  )
+endif
 
 scdoc = find_program('scdoc', required: get_option('man-pages'))
 if scdoc.found()

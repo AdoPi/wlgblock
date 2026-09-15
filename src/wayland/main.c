@@ -35,6 +35,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <time.h>
 #include <wayland-client.h>
 #include "../ext-session-lock-v1-client-protocol.h"
 #include <EGL/egl.h>
@@ -69,6 +70,13 @@ struct lock_surface {
     bool running;
     bool should_quit;
 };
+
+static double monotonic_seconds(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+}
 
 
 static void setup_gl(struct lock_surface *ls) {
@@ -310,11 +318,10 @@ int main(int argc, char **argv) {
     struct wl_keyboard *kbd = wl_seat_get_keyboard(d.seat);
     wl_keyboard_add_listener(kbd, &kbd_listener, &ls);
 
-    double time = 0;
-    double elapsed_time = 0;
-    clock_t start,end;
+    const double unlock_fade_seconds = 1.8;
+    const double unlock_hold_seconds = 1.2;
+    double quit_started_at = 0;
     while(ls.running && wl_display_dispatch(d.wl_display) != -1) {
-	start = clock();
 	wl_display_dispatch_pending(ls.disp->wl_display);
         draw_gbcc(&ls);
 
@@ -323,10 +330,13 @@ int main(int argc, char **argv) {
 		ls.should_quit = true;
 	}
 	if (ls.should_quit) {
-		time += elapsed_time;
-		if (time >= 0.6 && time < 1.3) {
-			gbc->animating = true;
-		} else if (time >= 1.4) {
+		if (quit_started_at == 0) {
+			quit_started_at = monotonic_seconds();
+		}
+		gbc->animating = true;
+
+		double elapsed_time = monotonic_seconds() - quit_started_at;
+		if (elapsed_time >= unlock_fade_seconds + unlock_hold_seconds) {
 			ls.running = false;
 			gbc->quit = true;
 			ext_session_lock_v1_unlock_and_destroy(ls.lock);
@@ -334,8 +344,6 @@ int main(int argc, char **argv) {
 	}
 	usleep(16000); 
 	wl_display_flush(d.wl_display);
-	end = clock();
-	elapsed_time = ((double)(end - start)) / CLOCKS_PER_SEC; 
     }
 
     wl_display_flush(d.wl_display);
@@ -362,4 +370,3 @@ int main(int argc, char **argv) {
 
     return 0;
 }
-
