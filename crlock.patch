@@ -1,7 +1,8 @@
-diff -ruN a/engine/menus/init_gender.asm b/engine/menus/init_gender.asm
---- a/engine/menus/init_gender.asm	2025-08-06 22:40:38.570637926 +0200
-+++ b/engine/menus/init_gender.asm	2025-08-06 22:40:43.032571614 +0200
-@@ -21,11 +21,20 @@
+diff --git a/engine/menus/init_gender.asm b/engine/menus/init_gender.asm
+index bd916ba15..37fbfedae 100644
+--- a/engine/menus/init_gender.asm
++++ b/engine/menus/init_gender.asm
+@@ -21,11 +21,20 @@ InitCrystalData:
  INCLUDE "mobile/mobile_12.asm"
  
  InitGender:
@@ -22,9 +23,10 @@ diff -ruN a/engine/menus/init_gender.asm b/engine/menus/init_gender.asm
  	ld hl, AreYouABoyOrAreYouAGirlText
  	call PrintText
  	ld hl, .MenuHeader
-diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
---- a/engine/menus/intro_menu.asm	2025-08-06 22:40:38.570637926 +0200
-+++ b/engine/menus/intro_menu.asm	2025-08-06 22:40:43.032571614 +0200
+diff --git a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
+index 617d6542a..a0868db72 100644
+--- a/engine/menus/intro_menu.asm
++++ b/engine/menus/intro_menu.asm
 @@ -1,4 +1,8 @@
  Intro_MainMenu:
 +	; wgblock(skip intro)
@@ -34,7 +36,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	ld de, MUSIC_NONE
  	call PlayMusic
  	call DelayFrame
-@@ -63,8 +67,9 @@
+@@ -63,8 +67,9 @@ NewGame:
  	ld [wDebugFlags], a
  	call ResetWRAM
  	call NewGame_ClearTilemapEtc
@@ -46,7 +48,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	call InitializeWorld
  
  	ld a, LANDMARK_NEW_BARK_TOWN
-@@ -75,6 +80,7 @@
+@@ -75,6 +80,7 @@ NewGame:
  
  	ld a, MAPSETUP_WARP
  	ldh [hMapEntryMethod], a
@@ -54,7 +56,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	jp FinishContinueFunction
  
  PlayerProfileSetup:
-@@ -222,6 +228,7 @@
+@@ -222,6 +228,7 @@ endc
  	farcall ClearGSBallFlag
  
  	call ResetGameTime
@@ -62,7 +64,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	ret
  
  .InitList:
-@@ -383,7 +390,7 @@
+@@ -383,7 +390,7 @@ Continue:
  	ret
  
  .SpawnAfterE4:
@@ -71,7 +73,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	ld [wDefaultSpawnpoint], a
  	call PostCreditsSpawn
  	jp FinishContinueFunction
-@@ -629,9 +636,10 @@
+@@ -629,9 +636,10 @@ Continue_DisplayGameTime:
  	jp PrintNum
  
  OakSpeech:
@@ -83,7 +85,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  
  	ld de, MUSIC_ROUTE_30
  	call PlayMusic
-@@ -739,7 +747,23 @@
+@@ -739,7 +747,23 @@ OakText7:
  	text_far _OakText7
  	text_end
  
@@ -107,7 +109,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	farcall MovePlayerPicRight
  	farcall ShowPlayerNamingChoices
  	ld a, [wMenuCursorY]
-@@ -750,6 +774,12 @@
+@@ -750,6 +774,12 @@ NamePlayer:
  	farcall MovePlayerPicLeft
  	ret
  
@@ -120,7 +122,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  .NewName:
  	ld b, NAME_PLAYER
  	ld de, wPlayerName
-@@ -966,11 +996,6 @@
+@@ -966,11 +996,6 @@ Intro_PlacePlayerSprite:
  DEF NUM_TITLESCREENOPTIONS EQU const_value
  
  IntroSequence:
@@ -132,7 +134,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  
  StartTitleScreen:
  	ldh a, [rSVBK]
-@@ -978,11 +1003,7 @@
+@@ -978,11 +1003,7 @@ StartTitleScreen:
  	ld a, BANK(wLYOverrides)
  	ldh [rSVBK], a
  
@@ -144,7 +146,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  
  	call ClearSprites
  	call ClearBGPalettes
-@@ -1032,6 +1053,9 @@
+@@ -1032,6 +1053,9 @@ StartTitleScreen:
  	ret
  
  RunTitleScreen:
@@ -154,7 +156,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	ld a, [wJumptableIndex]
  	bit 7, a
  	jr nz, .done_title
-@@ -1043,6 +1067,7 @@
+@@ -1043,6 +1067,7 @@ RunTitleScreen:
  
  .done_title
  	scf
@@ -162,7 +164,7 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	ret
  
  UnusedTitlePerspectiveScroll: ; unreferenced
-@@ -1343,7 +1368,6 @@
+@@ -1343,7 +1368,6 @@ CopyrightString:
  	db "@"
  
  GameInit::
@@ -170,10 +172,11 @@ diff -ruN a/engine/menus/intro_menu.asm b/engine/menus/intro_menu.asm
  	call ClearWindowData
  	call ClearBGPalettes
  	call ClearTilemap
-diff -ruN a/engine/menus/main_menu.asm b/engine/menus/main_menu.asm
---- a/engine/menus/main_menu.asm	2025-08-06 22:40:38.570637926 +0200
-+++ b/engine/menus/main_menu.asm	2025-08-06 22:40:43.032571614 +0200
-@@ -25,6 +25,10 @@
+diff --git a/engine/menus/main_menu.asm b/engine/menus/main_menu.asm
+index 15c73d852..115c7bc4d 100644
+--- a/engine/menus/main_menu.asm
++++ b/engine/menus/main_menu.asm
+@@ -25,6 +25,10 @@ INCBIN "gfx/mobile/mobile_menu.2bpp"
  
  MainMenu:
  .loop
@@ -184,7 +187,7 @@ diff -ruN a/engine/menus/main_menu.asm b/engine/menus/main_menu.asm
  	xor a
  	ld [wDisableTextAcceleration], a
  	call ClearTilemapEtc
-@@ -368,6 +372,7 @@
+@@ -368,6 +372,7 @@ ClearTilemapEtc:
  	ret
  
  MainMenu_NewGame:
@@ -192,9 +195,10 @@ diff -ruN a/engine/menus/main_menu.asm b/engine/menus/main_menu.asm
  	farcall NewGame
  	ret
  
-diff -ruN a/engine/menus/start_menu.asm b/engine/menus/start_menu.asm
---- a/engine/menus/start_menu.asm	2025-08-06 22:40:38.570637926 +0200
-+++ b/engine/menus/start_menu.asm	2025-08-06 22:40:43.033571599 +0200
+diff --git a/engine/menus/start_menu.asm b/engine/menus/start_menu.asm
+index dd48d9cb0..482189d71 100644
+--- a/engine/menus/start_menu.asm
++++ b/engine/menus/start_menu.asm
 @@ -13,6 +13,10 @@
  StartMenu::
  	call ClearWindowData
@@ -206,7 +210,7 @@ diff -ruN a/engine/menus/start_menu.asm b/engine/menus/start_menu.asm
  	ld de, SFX_MENU
  	call PlaySFX
  
-@@ -298,6 +302,7 @@
+@@ -298,6 +302,7 @@ endr
  
  	ld a, [wPartyCount]
  	and a
@@ -214,11 +218,11 @@ diff -ruN a/engine/menus/start_menu.asm b/engine/menus/start_menu.asm
  	jr z, .no_pokemon
  	ld a, STARTMENUITEM_POKEMON
  	call .AppendMenuList
-Binary files a/engine/movie/credits.o and b/engine/movie/credits.o differ
-diff -ruN a/engine/movie/splash.asm b/engine/movie/splash.asm
---- a/engine/movie/splash.asm	2025-08-06 22:40:38.570637926 +0200
-+++ b/engine/movie/splash.asm	2025-08-06 22:40:43.033571599 +0200
-@@ -23,6 +23,9 @@
+diff --git a/engine/movie/splash.asm b/engine/movie/splash.asm
+index af3b911f7..29bf8b35e 100644
+--- a/engine/movie/splash.asm
++++ b/engine/movie/splash.asm
+@@ -23,6 +23,9 @@ SplashScreen:
  	ld c, 10
  	call DelayFrames
  
@@ -228,10 +232,11 @@ diff -ruN a/engine/movie/splash.asm b/engine/movie/splash.asm
  ; Draw copyright screen
  	callfar Copyright
  	call WaitBGMap
-diff -ruN a/engine/movie/unused_title.asm b/engine/movie/unused_title.asm
---- a/engine/movie/unused_title.asm	2025-08-06 22:40:38.570637926 +0200
-+++ b/engine/movie/unused_title.asm	2025-08-06 22:40:43.033571599 +0200
-@@ -157,6 +157,7 @@
+diff --git a/engine/movie/unused_title.asm b/engine/movie/unused_title.asm
+index db916e925..01a791be8 100644
+--- a/engine/movie/unused_title.asm
++++ b/engine/movie/unused_title.asm
+@@ -157,6 +157,7 @@ UnusedTitleFG_OAM:
  TestCrystalTitleScreen: ; unreferenced
  ; Runs the title screen until A is pressed.
  ; Possibly used for testing.
@@ -239,11 +244,11 @@ diff -ruN a/engine/movie/unused_title.asm b/engine/movie/unused_title.asm
  	call _TitleScreen
  .loop
  	call JoyTextDelay
-Binary files a/engine/overworld/events.o and b/engine/overworld/events.o differ
-diff -ruN a/engine/pokemon/mon_submenu.asm b/engine/pokemon/mon_submenu.asm
---- a/engine/pokemon/mon_submenu.asm	2025-08-06 22:40:38.574637866 +0200
-+++ b/engine/pokemon/mon_submenu.asm	2025-08-06 22:40:43.038571525 +0200
-@@ -12,6 +12,7 @@
+diff --git a/engine/pokemon/mon_submenu.asm b/engine/pokemon/mon_submenu.asm
+index 8d7da9297..a88db8dc7 100644
+--- a/engine/pokemon/mon_submenu.asm
++++ b/engine/pokemon/mon_submenu.asm
+@@ -12,6 +12,7 @@ MonSubmenu:
  
  	ld a, 1
  	ldh [hBGMapMode], a
@@ -251,7 +256,7 @@ diff -ruN a/engine/pokemon/mon_submenu.asm b/engine/pokemon/mon_submenu.asm
  	call MonMenuLoop
  	ld [wMenuSelection], a
  
-@@ -39,6 +40,8 @@
+@@ -39,6 +40,8 @@ MonSubmenu:
  
  MonMenuLoop:
  .loop
@@ -260,7 +265,7 @@ diff -ruN a/engine/pokemon/mon_submenu.asm b/engine/pokemon/mon_submenu.asm
  	ld a, MENU_UNUSED_3 | MENU_BACKUP_TILES_2 ; flags
  	ld [wMenuDataFlags], a
  	ld a, [wMonSubmenuCount]
-@@ -283,8 +286,9 @@
+@@ -283,8 +286,9 @@ BattleMonMenu:
  	db 1 ; default option
  
  .MenuData:
@@ -273,9 +278,10 @@ diff -ruN a/engine/pokemon/mon_submenu.asm b/engine/pokemon/mon_submenu.asm
 -	db "CANCEL@"
 +	;db "STATS@"
 +	;db "CANCEL@"
-diff -ruN a/engine/pokemon/party_menu.asm b/engine/pokemon/party_menu.asm
---- a/engine/pokemon/party_menu.asm	2025-08-06 22:40:38.574637866 +0200
-+++ b/engine/pokemon/party_menu.asm	2025-08-06 22:40:43.038571525 +0200
+diff --git a/engine/pokemon/party_menu.asm b/engine/pokemon/party_menu.asm
+index d022f0f65..462b84b05 100644
+--- a/engine/pokemon/party_menu.asm
++++ b/engine/pokemon/party_menu.asm
 @@ -1,5 +1,5 @@
  SelectMonFromParty:
 -	call DisableSpriteUpdates
@@ -283,7 +289,7 @@ diff -ruN a/engine/pokemon/party_menu.asm b/engine/pokemon/party_menu.asm
  	xor a
  	ld [wPartyMenuActionText], a
  	call ClearBGPalettes
-@@ -7,7 +7,9 @@
+@@ -7,7 +7,9 @@ SelectMonFromParty:
  	call WaitBGMap
  	call SetDefaultBGPAndOBP
  	call DelayFrame
@@ -293,7 +299,7 @@ diff -ruN a/engine/pokemon/party_menu.asm b/engine/pokemon/party_menu.asm
  	call ReturnToMapWithSpeechTextbox
  	ret
  
-@@ -680,6 +682,7 @@
+@@ -680,6 +682,7 @@ PartyMenuSelect:
  	ld b, a
  	bit B_BUTTON_F, b
  	jr nz, .exitmenu ; B button
@@ -301,7 +307,7 @@ diff -ruN a/engine/pokemon/party_menu.asm b/engine/pokemon/party_menu.asm
  	ld a, [wMenuCursorY]
  	dec a
  	ld [wCurPartyMon], a
-@@ -690,11 +693,60 @@
+@@ -690,11 +693,60 @@ PartyMenuSelect:
  	ld a, [hl]
  	ld [wCurPartySpecies], a
  
@@ -363,16 +369,17 @@ diff -ruN a/engine/pokemon/party_menu.asm b/engine/pokemon/party_menu.asm
  
  .exitmenu
  	ld de, SFX_READ_TEXT_2
-diff -ruN a/engine/pokemon/switchpartymons.asm b/engine/pokemon/switchpartymons.asm
---- a/engine/pokemon/switchpartymons.asm	2025-08-06 22:40:38.574637866 +0200
-+++ b/engine/pokemon/switchpartymons.asm	2025-08-06 22:40:43.038571525 +0200
+diff --git a/engine/pokemon/switchpartymons.asm b/engine/pokemon/switchpartymons.asm
+index 3934f47d4..437169ace 100644
+--- a/engine/pokemon/switchpartymons.asm
++++ b/engine/pokemon/switchpartymons.asm
 @@ -1,4 +1,5 @@
  _SwitchPartyMons:
 +
  	ld a, [wSwitchMon]
  	dec a
  	ld [wSwitchMonFrom], a
-@@ -13,9 +14,12 @@
+@@ -13,9 +14,12 @@ _SwitchPartyMons:
  	call .ClearSprite
  	ld a, [wSwitchMonTo]
  	call .ClearSprite
@@ -385,7 +392,7 @@ diff -ruN a/engine/pokemon/switchpartymons.asm b/engine/pokemon/switchpartymons.
  .ClearSprite:
  	push af
  	hlcoord 0, 1
-@@ -143,3 +147,80 @@
+@@ -143,3 +147,78 @@ _SwitchPartyMons:
  	ld bc, NAME_LENGTH
  	call CopyBytes
  	ret
@@ -436,15 +443,13 @@ diff -ruN a/engine/pokemon/switchpartymons.asm b/engine/pokemon/switchpartymons.
 +
 +.all_match_check:
 +	ld a, 99
-+	ld [$DCC7], a
++	ld [wLockerSolved], a
 +	ret
 +
 +; Compare hl with de
 +.compare_strings:
-+    ld a, [hl] 
-+    ld b, a 
 +    ld a, [de] 
-+    cp b
++    cp [hl]
 +    jr nz, .strings_not_equal 
 +
 +    cp "@" 
@@ -466,58 +471,32 @@ diff -ruN a/engine/pokemon/switchpartymons.asm b/engine/pokemon/switchpartymons.
 +	ld a, 02
 +	ld [$C007], a
 +	ret
-diff -ruN a/ram/wram.asm b/ram/wram.asm
---- a/ram/wram.asm	2025-08-06 22:40:38.526638579 +0200
-+++ b/ram/wram.asm	2025-08-06 22:48:33.748170911 +0200
-@@ -2348,6 +2348,9 @@
+diff --git a/home/init.asm b/home/init.asm
+index 2b66a7782..18414202f 100644
+--- a/home/init.asm
++++ b/home/init.asm
+@@ -91,6 +91,8 @@ Init::
+ 	ldh [hCGB], a
  
- wCurPartySpecies:: db
- 
-+wSwitchingPartyMons:: ds 1
-+
-+
- wCurPartyMon::
- ; index of mon's party location (0-5)
- 	db
-@@ -3299,19 +3302,20 @@
- 
- wCurMapDataEnd::
- 
--
- SECTION "Party", WRAMX
- 
- wPokemonData::
- 
--wPartyCount::   db
--wPartySpecies:: ds PARTY_LENGTH
-+wPartyCount::   db 
-+wPartySpecies:: ds PARTY_LENGTH 
- wPartyEnd::     db ; older code doesn't check wPartyCount
- 
--wPartyMons::
--; wPartyMon1 - wPartyMon6
--for n, 1, PARTY_LENGTH + 1
--wPartyMon{d:n}:: party_struct wPartyMon{d:n}
-+
-+
-+wPartyMons:: 
-+
-+for n, 1, PARTY_LENGTH + 1 
-+wPartyMon{d:n}:: party_struct wPartyMon{d:n} 
- endr
- 
- wPartyMonOTs::
-diff -ruN a/maps/PlayersHouse1F.asm b/maps/PlayersHouse1F.asm
---- a/maps/PlayersHouse1F.asm	2025-08-06 22:40:38.503638921 +0200
-+++ b/maps/PlayersHouse1F.asm	2025-08-06 22:40:43.274568014 +0200
-@@ -407,3 +407,4 @@
+ 	call ClearWRAM
++	xor a
++	ld [wLockerSolved], a
+ 	ld a, 1
+ 	ldh [rSVBK], a
+ 	call ClearVRAM
+diff --git a/maps/PlayersHouse1F.asm b/maps/PlayersHouse1F.asm
+index f914bd86d..3d4e95148 100644
+--- a/maps/PlayersHouse1F.asm
++++ b/maps/PlayersHouse1F.asm
+@@ -407,3 +407,4 @@ PlayersHouse1F_MapEvents:
  	object_event  7,  4, SPRITE_MOM, SPRITEMOVEDATA_STANDING_LEFT, 0, 0, -1, DAY, 0, OBJECTTYPE_SCRIPT, 0, MomScript, EVENT_PLAYERS_HOUSE_MOM_2
  	object_event  0,  2, SPRITE_MOM, SPRITEMOVEDATA_STANDING_UP, 0, 0, -1, NITE, 0, OBJECTTYPE_SCRIPT, 0, MomScript, EVENT_PLAYERS_HOUSE_MOM_2
  	object_event  4,  4, SPRITE_POKEFAN_F, SPRITEMOVEDATA_STANDING_RIGHT, 0, 0, -1, -1, PAL_NPC_RED, OBJECTTYPE_SCRIPT, 0, NeighborScript, EVENT_PLAYERS_HOUSE_1F_NEIGHBOR
 +
-diff -ruN a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
---- a/maps/PlayersHouse2F.asm	2025-08-06 22:40:38.503638921 +0200
-+++ b/maps/PlayersHouse2F.asm	2025-08-06 22:40:43.252568342 +0200
+diff --git a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
+index 45d43a64d..b79d0c767 100644
+--- a/maps/PlayersHouse2F.asm
++++ b/maps/PlayersHouse2F.asm
 @@ -3,14 +3,24 @@
  	const PLAYERSHOUSE2F_DOLL_1
  	const PLAYERSHOUSE2F_DOLL_2
@@ -543,7 +522,7 @@ diff -ruN a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
  PlayersHouse2FNoopScene: ; unreferenced
  	end
  
-@@ -19,7 +29,9 @@
+@@ -19,7 +29,9 @@ PlayersHouse2FInitializeRoomCallback:
  	setevent EVENT_TEMPORARY_UNTIL_MAP_RELOAD_8
  	checkevent EVENT_INITIALIZED_EVENTS
  	iftrue .SkipInitialization
@@ -553,7 +532,7 @@ diff -ruN a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
  	endcallback
  
  .SkipInitialization:
-@@ -49,12 +61,23 @@
+@@ -49,12 +61,23 @@ PlayersHousePosterScript:
  .Script:
  	describedecoration DECODESC_POSTER
  
@@ -565,10 +544,10 @@ diff -ruN a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
 +PkmnTestName6: db "!!!@", 0 
 +
  PlayersHouseRadioScript:
- 	checkevent EVENT_GOT_A_POKEMON_FROM_ELM
++	checkevent EVENT_GOT_A_POKEMON_FROM_ELM
 +	iffalse .GivePoke
 +
-+	checkevent EVENT_GOT_A_POKEMON_FROM_ELM
+ 	checkevent EVENT_GOT_A_POKEMON_FROM_ELM
  	iftrue .NormalRadio
  	checkevent EVENT_LISTENED_TO_INITIAL_RADIO
  	iftrue .AbbreviatedRadio
@@ -577,7 +556,7 @@ diff -ruN a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
  	opentext
  	writetext PlayersRadioText1
  	pause 45
-@@ -69,6 +92,16 @@
+@@ -69,6 +92,16 @@ PlayersHouseRadioScript:
  	setevent EVENT_LISTENED_TO_INITIAL_RADIO
  	end
  
@@ -594,7 +573,7 @@ diff -ruN a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
  .NormalRadio:
  	jumpstd Radio1Script
  
-@@ -93,21 +126,24 @@
+@@ -93,21 +126,24 @@ PlayersHousePCScript:
  	end
  
  PlayersRadioText1:
@@ -622,3 +601,52 @@ diff -ruN a/maps/PlayersHouse2F.asm b/maps/PlayersHouse2F.asm
  	text "#MON!"
  	line "#MON CHANNEL…"
  	done
+diff --git a/ram/wram.asm b/ram/wram.asm
+index 39257904d..7294572c2 100644
+--- a/ram/wram.asm
++++ b/ram/wram.asm
+@@ -2348,6 +2348,9 @@ wMartItemID::
+ 
+ wCurPartySpecies:: db
+ 
++wSwitchingPartyMons:: ds 1
++
++
+ wCurPartyMon::
+ ; index of mon's party location (0-5)
+ 	db
+@@ -3299,19 +3302,20 @@ wScreenSave:: ds SCREEN_META_WIDTH * SCREEN_META_HEIGHT
+ 
+ wCurMapDataEnd::
+ 
+-
+ SECTION "Party", WRAMX
+ 
+ wPokemonData::
+ 
+-wPartyCount::   db
+-wPartySpecies:: ds PARTY_LENGTH
++wPartyCount::   db 
++wPartySpecies:: ds PARTY_LENGTH 
+ wPartyEnd::     db ; older code doesn't check wPartyCount
+ 
+-wPartyMons::
+-; wPartyMon1 - wPartyMon6
+-for n, 1, PARTY_LENGTH + 1
+-wPartyMon{d:n}:: party_struct wPartyMon{d:n}
++
++
++wPartyMons:: 
++
++for n, 1, PARTY_LENGTH + 1 
++wPartyMon{d:n}:: party_struct wPartyMon{d:n} 
+ endr
+ 
+ wPartyMonOTs::
+@@ -3652,3 +3656,6 @@ wWindowStack:: ds $1000 - 1
+ wWindowStackBottom:: ds 1
+ 
+ ENDSECTION
++
++SECTION "Locker flag", WRAM0[$CFFF]
++wLockerSolved:: db

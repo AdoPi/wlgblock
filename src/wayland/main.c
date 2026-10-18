@@ -42,6 +42,9 @@
 #include <GLES2/gl2.h>
 #include <wayland-egl.h>
 
+#define LOCKER_FLAG_ADDRESS 0xCFFF
+#define LOCKER_FLAG_SOLVED 99
+
 struct display {
     struct wl_display *wl_display;
     struct wl_registry *registry;
@@ -277,6 +280,8 @@ int main(int argc, char **argv) {
     if (!gbcc_parse_args(gbc, true, argc, argv)) {
 	    exit(EXIT_FAILURE);
     }
+    /* The core randomizes RAM; initialize the flag before starting its thread. */
+    gbcc_memory_write(&gbc->core, LOCKER_FLAG_ADDRESS, 0);
     gbc->quit = false;
 
     gbcc_audio_initialise(gbc, 96000, 2048);
@@ -325,8 +330,8 @@ int main(int argc, char **argv) {
 	wl_display_dispatch_pending(ls.disp->wl_display);
         draw_gbcc(&ls);
 
-	uint8_t m = gbcc_memory_read(&gbc->core, 0xDCC7);
-	if (m == 99) {
+	uint8_t m = gbcc_memory_read(&gbc->core, LOCKER_FLAG_ADDRESS);
+	if (m == LOCKER_FLAG_SOLVED) {
 		ls.should_quit = true;
 	}
 	if (ls.should_quit) {
